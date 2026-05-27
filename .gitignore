@@ -1,0 +1,31 @@
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local Bicep build artifacts
+*.json.bak
+/tmp/
+
+# Secrets (defensive — never commit)
+*.env
+.env.*
+*.pem
+*.key
+azure-credentials.json
+
+# Python (future agents)
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Node (future portal)
+node_modules/
+dist/
+build/
