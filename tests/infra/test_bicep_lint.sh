@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 (single-RG topology, RG-scoped SP)
+# Bicep lint test — CM-15 (single-RG topology, RG-scoped SP), CM-17 (Cosmos)
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -7,6 +7,8 @@
 #   4. tags.bicep restricts env to dev / prod / shared (no rogue env names)
 #   5. main.parameters.json exists and is valid JSON
 #   6. workflow targets rg-condomanager via `az deployment group …`
+#   7. cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on the
+#      policies-vector container and main.bicep wires the module in
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/infra-deploy.yml
@@ -26,6 +28,10 @@ echo "   ✓ main.bicep compiles cleanly"
 echo "▶  Compiling tags.bicep → ARM"
 bicep build "$BICEP_DIR/tags.bicep" --outfile /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
+
+echo "▶  Compiling modules/cosmos.bicep → ARM"
+bicep build "$BICEP_DIR/modules/cosmos.bicep" --outfile /tmp/cosmos.json
+echo "   ✓ modules/cosmos.bicep compiles cleanly"
 
 REQUIRED_TAGS=("env" "owner" "cost-center" "project" "managed-by")
 echo "▶  Verifying required tags exist in tags.bicep (for downstream resources)"
@@ -96,6 +102,64 @@ for env in dev staging prod; do
   fi
 done
 echo "   ✓ no stale per-env parameter files"
+
+# ---------------------------------------------------------------------------
+# CM-17 — Cosmos DB module checks
+# ---------------------------------------------------------------------------
+
+COSMOS="$BICEP_DIR/modules/cosmos.bicep"
+
+echo "▶  Verifying cosmos.bicep enables the NoSQL vector-search capability"
+if grep -Fq "EnableNoSQLVectorSearch" "$COSMOS"; then
+  echo "   ✓ EnableNoSQLVectorSearch capability declared"
+else
+  echo "   ✗ EnableNoSQLVectorSearch capability MISSING — vector indexes won't be accepted"
+  FAIL=1
+fi
+
+echo "▶  Verifying cosmos.bicep defines a diskANN vector index"
+if grep -Fq "diskANN" "$COSMOS"; then
+  echo "   ✓ diskANN vector index present"
+else
+  echo "   ✗ diskANN vector index MISSING from cosmos.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying cosmos.bicep declares all four required containers"
+REQUIRED_CONTAINERS=("tenants" "tickets" "conversations" "policies-vector")
+for c in "${REQUIRED_CONTAINERS[@]}"; do
+  # Match the container resource id: `id: 'tenants'`, `id: 'policies-vector'`, …
+  if grep -Eq "id:[[:space:]]+'$c'" "$COSMOS"; then
+    echo "   ✓ container '$c' declared"
+  else
+    echo "   ✗ container '$c' MISSING from cosmos.bicep"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying cosmos.bicep enables the free tier by default"
+if grep -Eq "param enableFreeTier bool = true" "$COSMOS"; then
+  echo "   ✓ enableFreeTier defaults to true"
+else
+  echo "   ✗ enableFreeTier default is not true — AC requires free-tier-by-default"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires in the cosmos module"
+if grep -Fq "modules/cosmos.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ main.bicep references modules/cosmos.bicep"
+else
+  echo "   ✗ main.bicep does NOT reference modules/cosmos.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.parameters.json supplies the env parameter"
+if grep -Fq '"env"' "$BICEP_DIR/main.parameters.json"; then
+  echo "   ✓ env parameter present in main.parameters.json"
+else
+  echo "   ✗ env parameter MISSING from main.parameters.json"
+  FAIL=1
+fi
 
 if [ $FAIL -ne 0 ]; then
   echo ""
