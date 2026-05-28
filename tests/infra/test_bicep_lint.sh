@@ -236,6 +236,26 @@ else
   FAIL=1
 fi
 
+echo "▶  Verifying policies-vector container has dedicated throughput (vector indexing forbids shared throughput)"
+if grep -Eq "param vectorContainerThroughput" "$COSMOS" \
+   && grep -Eq "throughput:[[:space:]]+vectorContainerThroughput" "$COSMOS"; then
+  echo "   ✓ vectorContainerThroughput param wired into a container's options.throughput"
+else
+  echo "   ✗ policies-vector lacks dedicated throughput — Cosmos rejects vector indexing on shared-throughput containers"
+  FAIL=1
+fi
+
+echo "▶  Verifying combined throughput (database shared + vector dedicated) stays within free-tier 1000 RU/s"
+DB_RU=$(grep -Eo "param databaseThroughput int = [0-9]+" "$COSMOS" | grep -Eo "[0-9]+$" || echo "0")
+VEC_RU=$(grep -Eo "param vectorContainerThroughput int = [0-9]+" "$COSMOS" | grep -Eo "[0-9]+$" || echo "0")
+TOTAL_RU=$((DB_RU + VEC_RU))
+if [ "$TOTAL_RU" -le 1000 ] && [ "$DB_RU" -gt 0 ] && [ "$VEC_RU" -gt 0 ]; then
+  echo "   ✓ databaseThroughput=$DB_RU + vectorContainerThroughput=$VEC_RU = ${TOTAL_RU} RU/s (≤ 1000 free-tier ceiling)"
+else
+  echo "   ✗ combined defaults exceed free-tier ceiling: databaseThroughput=$DB_RU + vectorContainerThroughput=$VEC_RU = ${TOTAL_RU} RU/s"
+  FAIL=1
+fi
+
 echo "▶  Verifying main.bicep wires in the cosmos module"
 if grep -Fq "modules/cosmos.bicep" "$BICEP_DIR/main.bicep"; then
   echo "   ✓ main.bicep references modules/cosmos.bicep"
