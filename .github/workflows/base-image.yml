@@ -1,0 +1,109 @@
+# Base-image pipeline — CM-20
+# Builds the curated CondoManager Python base image, Trivy-scans it for
+# HIGH/CRITICAL CVEs with upstream fixes, pushes to ACR, and prunes old
+# tags on the weekly cron.
+#
+# Triggers:
+#   * pull_request affecting the Dockerfile or this workflow → build + scan
+#     only (no Azure login, no push). Fork PRs work since OIDC isn't needed.
+#   * push to main affecting same paths → build + scan + push to dev ACR.
+#   * cron (Sun 06:00 UTC) → rebuild from current python:3.12-slim to
+#     pick up upstream security patches; push + prune.
+#   * workflow_dispatch → manual rebuild.
+#
+# Required GitHub secrets (shared with infra-deploy.yml — see docs/INFRA.md):
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#
+# Pre-req (one-time, post-first-deploy, see docs/INFRA.md):
+#   The OIDC SP needs `AcrPush` on the registry — RG-Contributor from CM-15
+#   is control-plane only and does NOT include data-plane push.
+name: base-image
+
+on:
+  pull_request:
+    paths:
+      - 'infra/docker/base/**'
+      - '.github/workflows/base-image.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'infra/docker/base/**'
+      - '.github/workflows/base-image.yml'
+  schedule:
+    - cron: '0 6 * * 0'   # Sunday 06:00 UTC — picks up upstream apt patches
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write          # OIDC federated login to Azure (push step only)
+  contents: read
+
+env:
+  ACR_NAME: acrcondomanagerdev
+  IMAGE_REPO: base/python
+  IMAGE_VERSION: 3.12-slim
+  KEEP_LAST: 5
+
+jobs:
+  build-scan-push:
+    name: Build, Trivy-scan, and (on non-PR) push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Compute date tag
+        id: tag
+        # UTC date so cron + manual runs produce consistent tags regardless
+        # of runner timezone.
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (local tag)
+        run: docker build -t "${IMAGE_REPO}:local" infra/docker/base
+
+      - name: Trivy scan (HIGH/CRITICAL with upstream fix)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_REPO }}:local
+          severity: HIGH,CRITICAL
+          # ignore-unfixed: don't fail on CVEs that have no upstream patch yet.
+          # Fix-available CRITICALs DO fail the build — operator should bump
+          # the base image or, with justification, add to .trivyignore.
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      # Azure login + push steps only fire on non-PR events. PRs can come
+      # from forks (no access to OIDC secrets) and we don't want to publish
+      # tentative images from PRs anyway — they get tested by the scan above.
+      - name: Azure login (OIDC)
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR login
+        if: github.event_name != 'pull_request'
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Tag and push (date-pinned + -latest)
+        if: github.event_name != 'pull_request'
+        # Two tags: date-pinned (immutable, reproducible) and -latest (mutable
+        # convenience pointer downstream Dockerfiles FROM by default).
+        run: |
+          REGISTRY="${ACR_NAME}.azurecr.io"
+          DATE_TAG="${IMAGE_VERSION}-${{ steps.tag.outputs.date }}"
+          LATEST_TAG="${IMAGE_VERSION}-latest"
+          docker tag "${IMAGE_REPO}:local" "${REGISTRY}/${IMAGE_REPO}:${DATE_TAG}"
+          docker tag "${IMAGE_REPO}:local" "${REGISTRY}/${IMAGE_REPO}:${LATEST_TAG}"
+          docker push "${REGISTRY}/${IMAGE_REPO}:${DATE_TAG}"
+          docker push "${REGISTRY}/${IMAGE_REPO}:${LATEST_TAG}"
+
+      - name: Prune (keep last ${{ env.KEEP_LAST }})
+        # Only on the weekly cron — we don't want every manual / push-triggered
+        # build to also delete history. The cron is the canonical retention
+        # cadence; ad-hoc runs just push and let the next cron prune.
+        if: github.event_name == 'schedule'
+        run: bash infra/scripts/acr-prune.sh "$ACR_NAME" "$IMAGE_REPO" "$KEEP_LAST"

@@ -49,14 +49,19 @@ infra/
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
 │       ├── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
-│       └── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
+│       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
+│       └── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
+├── docker/
+│   └── base/Dockerfile                       # Curated python:3.12-slim base image (CM-20)
 └── scripts/
     ├── cosmos-smoke-test.py                  # Post-deploy validation for Cosmos vector search (CM-17)
     ├── seed-keyvault-secrets.sh              # Seed the 8 initial secret names with REPLACE-ME (CM-18)
-    └── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
+    ├── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
+    └── acr-prune.sh                          # Basic-SKU equivalent of ACR retention policy (CM-20)
 .github/
 └── workflows/
-    └── infra-deploy.yml                      # CI: lint → what-if → deploy (single RG)
+    ├── infra-deploy.yml                      # CI: lint → what-if → deploy (single RG)
+    └── base-image.yml                        # Base image build/scan/push (CM-20)
 tests/
 └── infra/
     └── test_bicep_lint.sh                    # Lint test runs in CI on every PR
@@ -332,9 +337,86 @@ declares the vault + the MI binding only; values come from out-of-band
 `az keyvault secret set` calls (manual today, possibly an Azure DevOps
 release pipeline later, but never from this repo).
 
+## Azure Container Registry & base image (CM-20)
+
+ACR holds the curated Python base image that future agent-runtime services
+build FROM. The hello-world Container App still pulls from MCR; ACR's
+first real consumers are later stories.
+
+| Aspect          | Value                                                                |
+|-----------------|----------------------------------------------------------------------|
+| Registry name   | `acrcondomanager<env>` (no hyphens — ACR forbids them; see below)    |
+| SKU             | Basic                                                                |
+| Admin user      | Disabled (AAD / OIDC + Managed Identity only)                        |
+| Public network  | Enabled (private endpoint requires Premium SKU)                      |
+| Anonymous pull  | Disabled                                                             |
+| Base image      | `acrcondomanager<env>.azurecr.io/base/python:3.12-slim-<YYYYMMDD>` + `…-latest` |
+| Build pipeline  | `.github/workflows/base-image.yml` (PR / push / Sun 06:00 UTC cron / dispatch) |
+| CVE scanner     | Trivy — fails on HIGH/CRITICAL with an upstream fix; ignores unfixed |
+| Retention       | `infra/scripts/acr-prune.sh` — keeps last 5 tagged per repo + deletes untagged |
+
+### Naming exception
+ACR registry names must be alphanumeric only, 5–50 chars, and globally
+unique. Hyphens are forbidden, so `acr.bicep` is the *one* module that
+deviates from the `<resource>-condomanager-<env>` convention. The tokens
+are otherwise identical, just concatenated: `acrcondomanagerdev`,
+`acrcondomanagerprod`.
+
+### One-time setup after first deploy
+Grant the GitHub Actions OIDC SP push permission on the registry —
+RG-Contributor (from CM-15) is control-plane only and does NOT include
+data-plane push:
+
+```bash
+SP_OBJECT_ID=$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)
+ACR_ID=$(az acr show --name acrcondomanagerdev --query id -o tsv)
+az role assignment create --assignee "$SP_OBJECT_ID" --role AcrPush --scope "$ACR_ID"
+```
+
+Future Container Apps that pull this image also need `AcrPull`, granted
+to the User-Assigned MI from CM-18. That's a per-consumer-story step.
+
+### CVE policy
+The Trivy scan fails on `HIGH,CRITICAL` severities **only when an upstream
+fix exists** (`ignore-unfixed: true`). Options when a fix-available
+CRITICAL surfaces:
+
+1. **Preferred:** the weekly cron rebuilds from `python:3.12-slim`, which
+   picks up the upstream apt patch automatically. Just re-run the workflow.
+2. **Override:** add the CVE to `.trivyignore` at the repo root with a
+   one-line justification + an expiry date. Re-evaluate at the next rotation.
+
+### Why Basic SKU + a script instead of ACR's retention policy
+ACR's built-in `policies.retentionPolicy` is a Premium-only feature. AC #1
+fixes the SKU at Basic, so `acr-prune.sh` substitutes — invoked from the
+weekly cron of `base-image.yml`, it keeps the last 5 tagged manifests per
+repo and deletes untagged ones. Upgrade to Premium gives back the built-in
+policy plus geo-replication and private endpoint — defer until a real
+consumer (or a compliance requirement) demands it.
+
+### Trigger semantics for `base-image.yml`
+| Event | Build | Trivy | Push | Prune |
+|---|---|---|---|---|
+| Pull request (any) | ✓ | ✓ | — | — |
+| Push to `main` (Dockerfile or workflow changes) | ✓ | ✓ | ✓ | — |
+| `schedule` (Sun 06:00 UTC) | ✓ | ✓ | ✓ | ✓ |
+| `workflow_dispatch` | ✓ | ✓ | ✓ | — |
+
+PR runs intentionally skip Azure login + push so fork PRs work and tentative
+builds don't pollute the registry. The Sunday cron is the canonical
+retention cadence — manual / push-triggered builds just push and let the
+next cron prune.
+
+### Manual prune
+```bash
+az login
+bash infra/scripts/acr-prune.sh acrcondomanagerdev base/python 5
+```
+Idempotent; second run does zero deletes if the repo is already at <= N tagged.
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,
-following the CM-16 / CM-17 / CM-18 pattern: accept `env`, `location`,
-and `tags` params, emit any resource IDs downstream modules need as
-outputs, and let `main.bicep` chain them in dependency order.
+following the CM-16 / CM-17 / CM-18 / CM-20 pattern: accept `env`,
+`location`, and `tags` params, emit any resource IDs downstream modules
+need as outputs, and let `main.bicep` chain them in dependency order.

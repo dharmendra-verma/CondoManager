@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-20
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -21,6 +21,11 @@
 #      main.bicep; container-app.bicep accepts userAssignedIdentityId;
 #      compiled ARM includes KV + MI + roleAssignments resource types;
 #      seed-keyvault-secrets.sh secret list matches keyvault.bicep
+#  15. (CM-20) acr.bicep defaults SKU=Basic + adminUserEnabled=false; uses
+#      hyphen-free name pattern; main.bicep wires it; compiled ARM contains
+#      Microsoft.ContainerRegistry/registries; base Dockerfile pins
+#      python:3.12-slim + runs apt upgrade; base-image.yml references
+#      Trivy + az acr login + docker push; acr-prune.sh exists.
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/infra-deploy.yml
@@ -65,7 +70,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -88,7 +93,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -354,6 +359,91 @@ else
   printf "%s\n" "$KV_SECRETS" | sed 's/^/       /'
   echo "     --- seed-keyvault-secrets.sh ---"
   printf "%s\n" "$SH_SECRETS" | sed 's/^/       /'
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-20 — Azure Container Registry + base image pipeline
+# ---------------------------------------------------------------------------
+
+ACR_BICEP="$MODULES_DIR/acr.bicep"
+BASE_DF="$ROOT/infra/docker/base/Dockerfile"
+BASE_WF="$ROOT/.github/workflows/base-image.yml"
+PRUNE_SH="$ROOT/infra/scripts/acr-prune.sh"
+
+echo "▶  Verifying acr.bicep defaults SKU to Basic (AC #1)"
+if grep -Eq "param sku string = 'Basic'" "$ACR_BICEP"; then
+  echo "   ✓ Basic SKU default"
+else
+  echo "   ✗ Basic SKU default missing from acr.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying acr.bicep disables admin user (no static creds)"
+if grep -Eq "param adminUserEnabled bool = false" "$ACR_BICEP"; then
+  echo "   ✓ adminUserEnabled defaults to false"
+else
+  echo "   ✗ adminUserEnabled is NOT false — use OIDC + MI, not username/password"
+  FAIL=1
+fi
+
+echo "▶  Verifying acr.bicep uses hyphen-free name pattern 'acrcondomanager\${env}'"
+if grep -Fq "var acrName = 'acrcondomanager\${env}'" "$ACR_BICEP"; then
+  echo "   ✓ ACR name pattern correct (ACR forbids hyphens)"
+else
+  echo "   ✗ ACR name pattern unexpected — expected: var acrName = 'acrcondomanager\${env}'"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the acr module"
+if grep -Fq "modules/acr.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ acr module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/acr.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains Microsoft.ContainerRegistry/registries"
+if grep -Fq "Microsoft.ContainerRegistry/registries" /tmp/main.json; then
+  echo "   ✓ Microsoft.ContainerRegistry/registries present in compiled ARM"
+else
+  echo "   ✗ Microsoft.ContainerRegistry/registries MISSING from compiled ARM"
+  FAIL=1
+fi
+
+echo "▶  Verifying base Dockerfile pins python:3.12-slim (AC #2)"
+if [ -s "$BASE_DF" ] && grep -Eq '^FROM[[:space:]]+python:3\.12-slim' "$BASE_DF"; then
+  echo "   ✓ FROM python:3.12-slim present"
+else
+  echo "   ✗ Dockerfile missing or does NOT FROM python:3.12-slim"
+  FAIL=1
+fi
+
+echo "▶  Verifying base Dockerfile applies apt security patches"
+if grep -Eq "apt-get .*upgrade" "$BASE_DF" 2>/dev/null; then
+  echo "   ✓ apt-get upgrade present"
+else
+  echo "   ✗ Dockerfile missing 'apt-get upgrade' — won't pick up upstream security patches"
+  FAIL=1
+fi
+
+echo "▶  Verifying base-image.yml exists and wires build + Trivy + ACR push (AC #3)"
+if [ -s "$BASE_WF" ] \
+   && grep -Fq "aquasecurity/trivy-action" "$BASE_WF" \
+   && grep -Fq "az acr login" "$BASE_WF" \
+   && grep -Fq "docker push" "$BASE_WF" \
+   && grep -Fq "docker build" "$BASE_WF"; then
+  echo "   ✓ base-image.yml wired (build + Trivy + az acr login + docker push)"
+else
+  echo "   ✗ base-image.yml missing or incomplete (need docker build, Trivy, az acr login, docker push)"
+  FAIL=1
+fi
+
+echo "▶  Verifying acr-prune.sh exists (Basic-SKU retention substitute, AC #4)"
+if [ -s "$PRUNE_SH" ]; then
+  echo "   ✓ acr-prune.sh present"
+else
+  echo "   ✗ infra/scripts/acr-prune.sh missing — no retention policy in place"
   FAIL=1
 fi
 
