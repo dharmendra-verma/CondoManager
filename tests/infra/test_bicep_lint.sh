@@ -65,6 +65,18 @@ bicep_build() {
   fi
 }
 
+# CM-43: capture stdout+stderr so the caller can inspect warnings without
+# silencing them. Same engine as bicep_build, just no redirection.
+bicep_build_capture() {
+  local src="$1"
+  local out="$2"
+  if [ "$BICEP_BIN" = "standalone" ]; then
+    bicep build "$src" --outfile "$out" 2>&1
+  else
+    az bicep build --file "$src" --outfile "$out" 2>&1
+  fi
+}
+
 echo "▶  Compiling main.bicep → ARM"
 bicep_build "$BICEP_DIR/main.bicep" /tmp/main.json
 echo "   ✓ main.bicep compiles cleanly"
@@ -424,6 +436,21 @@ else
   echo "     --- seed-keyvault-secrets.sh ---"
   printf "%s\n" "$SH_SECRETS" | sed 's/^/       /'
   FAIL=1
+fi
+
+# CM-43: regression guard. Bicep "Warning <code>: <msg>" lines reference a
+# .bicep file at (line,col). We filter to those specifically so the unrelated
+# "WARNING: A new Bicep release is available" CLI banner doesn't trip the
+# check.
+echo "▶  Verifying keyvault.bicep produces no Bicep warnings (CM-43 regression guard)"
+KV_WARNINGS=$(bicep_build_capture "$KV" /tmp/keyvault-warncheck.json \
+                | grep -E '\.bicep\([0-9]+,[0-9]+\) : Warning ' || true)
+if [ -n "$KV_WARNINGS" ]; then
+  echo "   ✗ keyvault.bicep emitted Bicep warnings:"
+  printf "%s\n" "$KV_WARNINGS" | sed 's/^/       /'
+  FAIL=1
+else
+  echo "   ✓ keyvault.bicep is warning-clean"
 fi
 
 # ---------------------------------------------------------------------------

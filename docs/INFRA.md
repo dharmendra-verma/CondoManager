@@ -108,35 +108,30 @@ before running `az deployment group create --parameters env=prod` against `rg-co
 
 ## One-time setup (manual, by repo owner)
 
-GitHub cannot create the Azure service principal for itself, and these steps
-involve credentials that must never cross the chat:
+The bootstrap is captured in **`infra/scripts/setup-azure-oidc.sh`**. Run it
+once in Azure Cloud Shell on the account that owns the target subscription —
+the script is **idempotent**, so re-running it (e.g. after CM-43 added the
+new RG-scoped role grant) only applies what's missing.
 
 ```bash
-# 1. Create an Azure AD application + service principal
-az ad sp create-for-rbac --name "github-condomanager-infra" --skip-assignment
-
-# 2. Grant the SP Contributor at the subscription scope
-az role assignment create \
-  --assignee <APP_ID> \
-  --role Contributor \
-  --scope /subscriptions/<SUBSCRIPTION_ID>
-
-# 3. Configure federated credentials (OIDC) for GitHub — main branch
-az ad app federated-credential create --id <APP_ID> --parameters '{
-  "name": "github-main",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:dharmendra-verma/CondoManager:ref:refs/heads/main",
-  "audiences": ["api://AzureADTokenExchange"]
-}'
-
-# 4. Federated credential for pull requests (what-if job)
-az ad app federated-credential create --id <APP_ID> --parameters '{
-  "name": "github-pr",
-  "issuer": "https://token.actions.githubusercontent.com",
-  "subject": "repo:dharmendra-verma/CondoManager:pull_request",
-  "audiences": ["api://AzureADTokenExchange"]
-}'
+# In https://shell.azure.com (or any az-CLI environment with Owner / UAA on the sub)
+bash infra/scripts/setup-azure-oidc.sh
 ```
+
+What it does:
+
+| Step | Action |
+|------|--------|
+| 1 | Create / reuse Azure AD app + service principal `github-condomanager-infra` |
+| 2 | Grant **`Contributor`** at **subscription scope** (broad deploy permissions) |
+| 3 | (CM-43) Grant **`User Access Administrator`** at **`rg-condomanager` scope** — needed because Bicep modules under `infra/bicep/modules/` declare `Microsoft.Authorization/roleAssignments` resources (e.g. `keyvault.bicep` grants the shared MI `Key Vault Secrets User`). `Contributor` does not include `roleAssignments/write`. UAA is scoped to the single RG to limit blast radius. |
+| 4 | Create / reuse 4 federated credentials (`github-main`, `github-pull-request`, `github-env-dev`, `github-env-prod`) — used by `build.yml` and `deploy.yml` for OIDC token exchange. |
+| 5 | Print the three public identifiers to paste into GitHub Actions secrets. |
+
+> **Operator note for CM-43:** if you've already run this script before
+> CM-43 landed, re-run it once after this PR merges to pick up the new
+> `User Access Administrator` grant. Without it, `deploy.yml → deploy-dev`
+> fails with `Authorization failed ... 'Microsoft.Authorization/roleAssignments/write'`.
 
 ### Required GitHub secrets
 

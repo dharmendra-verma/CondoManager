@@ -34,6 +34,7 @@ param tags object
 param managedIdentityPrincipalId string
 
 @description('Documentation-only list of secret names this vault is expected to hold. Seeded by infra/scripts/seed-keyvault-secrets.sh with the placeholder REPLACE-ME so the schema exists; real values are set out-of-band. The lint test diffs this list against the seed script to prevent drift.')
+#disable-next-line no-unused-params // CM-43: param is consumed by seed-keyvault-secrets.sh + test_bicep_lint.sh, not by Bicep itself
 param secretNames array = [
   'azure-openai-key'
   'twilio-account-sid'
@@ -65,7 +66,10 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     softDeleteRetentionInDays: 90
     enablePurgeProtection: true            // irreversible; vault name reserved 90d after delete
     publicNetworkAccess: 'Enabled'         // tighten to private endpoint in a later story
-    minimumTlsVersion: '1.2'               // matches the Cosmos module's TLS posture
+    // CM-43: minimumTlsVersion property was removed — BCP037 (not valid on
+    // VaultProperties). Key Vault enforces TLS 1.2+ by default and exposes no
+    // configurable knob (unlike Cosmos / Storage). The property was silently
+    // ignored when previously set.
     // networkAcls is a no-op while publicNetworkAccess is 'Enabled' (the
     // firewall only gates traffic when public access is restricted). Set
     // here so the desired posture is already in place when a later story
