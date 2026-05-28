@@ -39,9 +39,14 @@ Every resource provisioned by Bicep MUST carry these tags. The schema lives in
 ```
 infra/
 └── bicep/
-    ├── main.bicep             # Subscription-scope: creates THE shared RG
-    ├── tags.bicep             # Reusable tag schema (env: dev|prod|shared)
-    └── main.parameters.json   # Single parameters file for the shared RG
+    ├── main.bicep                            # RG-scoped: orchestrates all modules
+    ├── tags.bicep                            # Reusable tag schema (env: dev|prod|shared)
+    ├── main.parameters.json                  # Single parameters file (env=dev today)
+    └── modules/                              # Per-resource Bicep modules (CM-16+)
+        ├── vnet.bicep                        # VNet + /23 subnet delegated to Container Apps
+        ├── log-analytics.bicep               # Log Analytics workspace for app logs
+        ├── container-apps-env.bicep          # Container Apps Managed Environment (Consumption)
+        └── container-app.bicep               # Hello-world Container App (smoke-test surface)
 .github/
 └── workflows/
     └── infra-deploy.yml       # CI: lint → what-if → deploy (single RG)
@@ -113,34 +118,97 @@ In `Settings → Environments → New environment`:
 | `dev`       | future per-env resource jobs  | none                         |
 | `prod`      | shared RG + per-env resources | at least one approver        |
 
-## Deploying manually (smoke test before CI works)
+## Deploying manually (smoke test)
+
+The shared RG (`rg-condomanager`) is bootstrapped out-of-band — see
+`infra/scripts/setup-azure-oidc.sh`. Once it exists, all subsequent
+deployments are RG-scoped:
 
 ```bash
 az login
 az account set --subscription <SUBSCRIPTION_ID>
-az deployment sub create \
-  --name cm15-rg-manual \
-  --location eastus2 \
+az deployment group create \
+  --resource-group rg-condomanager \
+  --name cm-manual \
   --template-file infra/bicep/main.bicep \
   --parameters infra/bicep/main.parameters.json
 ```
 
+## Container Apps environment (CM-16)
+
+```
+VNet  vnet-condomanager-dev      10.0.0.0/16
+ └── snet-containerapps-dev      10.0.0.0/23   (delegated to Microsoft.App/environments)
+
+Log Analytics  law-condomanager-dev     PerGB2018, 30-day retention
+
+Container Apps env  cae-condomanager-dev
+ ├── Workload profile: Consumption  (free tier: 180K vCPU-sec/mo)
+ ├── VNet integration: snet-containerapps-dev
+ └── App logs: → law-condomanager-dev
+
+Container App  ca-hello-condomanager-dev
+ ├── Image:  mcr.microsoft.com/k8s/demo/hello-app:1.0
+ ├── Resources: 0.25 vCPU / 0.5 Gi memory
+ ├── Scale:  0–1 replicas (scale-to-zero when idle)
+ └── Ingress: external, targetPort 8080
+```
+
+### Free-tier cost guard
+
+- **Container Apps Consumption** grant: 180,000 vCPU-seconds and 400,000 GiB-seconds per month per subscription.
+- The hello-world app uses 0.25 vCPU / 0.5 GiB with `minReplicas: 0`, so it consumes **zero vCPU-seconds while idle** and roughly 900 vCPU-sec per hour of continuous traffic — well under the monthly grant.
+- **Log Analytics** grant: 5 GB ingestion per month, 31-day retention free. The hello-world generates minimal logs.
+
+### Smoke test after deploy
+
+After the CI deploy or a manual deploy lands:
+
+```bash
+# Grab the FQDN from the deployment outputs
+FQDN=$(az deployment group show \
+  --resource-group rg-condomanager \
+  --name cm-manual \
+  --query 'properties.outputs.containerAppFqdn.value' -o tsv)
+
+# Curl it (first hit may take ~10s as the app scales from 0 to 1)
+curl -i "https://${FQDN}/"
+# expected: HTTP/2 200 + a "Hello, world!" body from mcr.microsoft.com/k8s/demo/hello-app
+```
+
 ## Adding per-env resources in later stories
 
-Inside any resource module that deploys *into* `rg-condomanager`, import
-`tags.bicep` with `env: 'dev'` or `env: 'prod'`:
+Each new resource type gets its own module under `infra/bicep/modules/`,
+following the CM-16 pattern: accept `env`, `location`, and `tags` params,
+emit any resource IDs that downstream modules need as outputs, and let
+`main.bicep` chain them in dependency order.
 
 ```bicep
-module devTags 'tags.bicep' = {
-  name: 'tags-dev'
-  scope: resourceGroup('rg-condomanager')
-  params: { env: 'dev', costCenter: 'cc-condomanager' }
-}
+// example: cosmos.bicep (CM-17, illustrative)
+targetScope = 'resourceGroup'
+
+@allowed([ 'dev', 'prod' ])
+param env string
+param location string
+param tags object
 
 resource cosmosDev 'Microsoft.DocumentDB/databaseAccounts@2024-08-15' = {
-  name: 'cosmos-condomanager-dev'
-  location: 'eastus2'
-  tags: devTags.outputs.tags
+  name: 'cosmos-condomanager-${env}'
+  location: location
+  tags: tags
   // ...
+}
+```
+
+Then wire it into `main.bicep`:
+
+```bicep
+module cosmos './modules/cosmos.bicep' = {
+  name: 'cosmos-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+  }
 }
 ```
