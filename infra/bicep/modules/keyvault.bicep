@@ -65,6 +65,11 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     softDeleteRetentionInDays: 90
     enablePurgeProtection: true            // irreversible; vault name reserved 90d after delete
     publicNetworkAccess: 'Enabled'         // tighten to private endpoint in a later story
+    minimumTlsVersion: '1.2'               // matches the Cosmos module's TLS posture
+    // networkAcls is a no-op while publicNetworkAccess is 'Enabled' (the
+    // firewall only gates traffic when public access is restricted). Set
+    // here so the desired posture is already in place when a later story
+    // flips publicNetworkAccess to 'Disabled' + private endpoint.
     networkAcls: {
       defaultAction: 'Allow'
       bypass: 'AzureServices'
@@ -89,4 +94,6 @@ resource kvSecretsUserAssignment 'Microsoft.Authorization/roleAssignments@2022-0
 output vaultName string = vault.name
 output vaultId string = vault.id
 output vaultUri string = vault.properties.vaultUri
-output secretNames array = secretNames
+// secretNames intentionally NOT output — it's a documentation-only param
+// default that the seed script duplicates and the lint test diffs against.
+// Surfacing it here adds noise to deployment outputs without a consumer.

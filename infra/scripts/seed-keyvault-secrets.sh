@@ -66,8 +66,14 @@ for s in "${SECRETS[@]}"; do
   # `az keyvault secret show` exits non-zero when the secret doesn't exist;
   # `|| true` lets us treat that as the empty-string case uniformly.
   existing=$(az keyvault secret show --vault-name "$VAULT_NAME" --name "$s" --query value -o tsv 2>/dev/null || true)
-  if [ -n "$existing" ] && [ "$existing" != "$PLACEHOLDER" ]; then
-    echo "  . $s — non-placeholder value already set, skipping"
+  if [ -n "$existing" ]; then
+    # Skip on ANY existing value — including the placeholder — so re-runs
+    # don't accumulate noop secret versions in KV's history.
+    if [ "$existing" = "$PLACEHOLDER" ]; then
+      echo "  . $s — placeholder already present, skipping"
+    else
+      echo "  . $s — non-placeholder value already set, skipping"
+    fi
     SKIPPED=$((SKIPPED + 1))
     continue
   fi

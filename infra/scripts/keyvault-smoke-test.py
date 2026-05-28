@@ -101,9 +101,13 @@ def main() -> int:
         sys.stderr.write(f"FAIL: secret '{args.secret}' exists but value is empty.\n")
         return 1
 
-    is_placeholder = secret.value == "REPLACE-ME"
-    masked = "REPLACE-ME (placeholder — not yet rotated to real value)" if is_placeholder else "***"
-    print(f"OK   Read '{args.secret}' = {masked} (length={len(secret.value)})")
+    # Mask real values completely — even printing the length can fingerprint
+    # well-known credential formats. Placeholders are public-knowledge so the
+    # length is fine to surface (and confirms the test actually read something).
+    if secret.value == "REPLACE-ME":
+        print(f"OK   Read '{args.secret}' = REPLACE-ME (placeholder; length={len(secret.value)})")
+    else:
+        print(f"OK   Read '{args.secret}' = *** (non-placeholder value, masked)")
     print("PASS Key Vault + Managed Identity round-trip works.")
     return 0
 
