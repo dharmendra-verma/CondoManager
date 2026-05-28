@@ -1,5 +1,6 @@
 // main.bicep — entry point for resources deployed INTO rg-condomanager.
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
+//       CM-18 (Key Vault + User-Assigned MI)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -78,7 +79,33 @@ module containerAppsEnv './modules/container-apps-env.bicep' = {
   }
 }
 
+// User-Assigned Managed Identity shared by all CondoManager workloads. (CM-18)
+// Provisioned before the Container App so the MI ID can be passed in at
+// app-creation time (avoids a second deployment to attach the identity).
+module managedIdentity './modules/managed-identity.bicep' = {
+  name: 'mi-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+  }
+}
+
+// Key Vault (RBAC mode) + role assignment of the shared MI to
+// `Key Vault Secrets User`. (CM-18)
+module keyvault './modules/keyvault.bicep' = {
+  name: 'kv-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    managedIdentityPrincipalId: managedIdentity.outputs.principalId
+  }
+}
+
 // Hello-world Container App — smoke-test surface for CM-16 AC.
+// CM-18: attaches the shared User-Assigned MI so the app can read KV secrets
+// via DefaultAzureCredential once placeholder values are populated.
 module containerApp './modules/container-app.bicep' = {
   name: 'ca-hello-${env}'
   params: {
@@ -86,6 +113,7 @@ module containerApp './modules/container-app.bicep' = {
     location: location
     tags: tagsModule.outputs.tags
     environmentId: containerAppsEnv.outputs.environmentId
+    userAssignedIdentityId: managedIdentity.outputs.identityId
   }
 }
 
@@ -121,3 +149,9 @@ output containerAppFqdn string = containerApp.outputs.fqdn
 output cosmosAccountName string = cosmos.outputs.accountName
 output cosmosEndpoint string = cosmos.outputs.endpoint
 output cosmosDatabaseName string = cosmos.outputs.databaseName
+
+// CM-18 outputs — used by seed-keyvault-secrets.sh + keyvault-smoke-test.py.
+output managedIdentityName string = managedIdentity.outputs.identityName
+output managedIdentityClientId string = managedIdentity.outputs.clientId
+output keyVaultName string = keyvault.outputs.vaultName
+output keyVaultUri string = keyvault.outputs.vaultUri
