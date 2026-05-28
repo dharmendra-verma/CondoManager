@@ -58,14 +58,23 @@ infra/
     ├── seed-keyvault-secrets.sh              # Seed the 8 initial secret names with REPLACE-ME (CM-18)
     ├── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
     └── acr-prune.sh                          # Basic-SKU equivalent of ACR retention policy (CM-20)
+agents/
+└── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21)
 .github/
 └── workflows/
-    ├── build.yml                             # PR + push:main · per-area lint/what-if + summary comment (CM-19)
+    ├── build.yml                             # PR + push:main · per-area lint/what-if + summary comment (CM-19, + python area in CM-21)
     ├── deploy.yml                            # push:main → deploy-dev, release:published → deploy-prod (CM-19)
     └── base-image.yml                        # Base image build/scan/push (CM-20)
 tests/
-└── infra/
-    └── test_bicep_lint.sh                    # Lint test runs in CI on every PR
+├── infra/
+│   └── test_bicep_lint.sh                    # Bicep lint runs in CI on every PR touching infra
+└── observability/                            # pytest suite for agents/observability/ (CM-21)
+docs/
+├── INFRA.md                                  # this file
+├── CICD.md                                   # CI/CD operator guide (CM-19)
+└── OBSERVABILITY.md                          # OTel + request_id + manual span helpers (CM-21)
+pyproject.toml                                # Python project metadata (CM-21)
+requirements-lock.txt                         # pinned transitive Python deps (CM-21)
 ```
 
 ## How CI/CD works (CM-19)

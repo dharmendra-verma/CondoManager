@@ -1,11 +1,13 @@
-# Build pipeline — CM-19
+# Build pipeline — CM-19 (CI split) + CM-21 (python area)
 #
 # Triggers on every pull request and on push to main. Runs per-area
 # build/lint/test jobs and posts a sticky summary comment back to the PR.
 #
-# Today only the `infra` area exists. When future stories land application
-# code (Python agents, TypeScript portal), they add their own jobs to this
-# file alongside the infra jobs.
+# Areas today:
+#   * infra  — Bicep lint + what-if (CM-19)
+#   * python — agents package: ruff + mypy + pytest (CM-21)
+#
+# Future areas (portal, etc.) add their own jobs alongside these.
 #
 # OIDC is used for the what-if Azure login (existing federated credentials
 # from CM-15 — subject `repo:.../...:pull_request`). No PATs anywhere; the
@@ -33,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       infra: ${{ steps.filter.outputs.infra }}
+      python: ${{ steps.filter.outputs.python }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -44,6 +47,14 @@ jobs:
               - 'tests/infra/**'
               - '.github/workflows/build.yml'
               - '.github/workflows/deploy.yml'
+            python:
+              - 'agents/**'
+              - 'tests/observability/**'
+              - 'tests/__init__.py'
+              - 'pyproject.toml'
+              - 'requirements-lock.txt'
+              - '.python-version'
+              - '.github/workflows/build.yml'
 
   lint-infra:
     name: Infra · Bicep lint + build
@@ -96,9 +107,53 @@ jobs:
             --parameters infra/bicep/main.parameters.json \
             --parameters env=dev
 
+  lint-python:
+    name: Python · ruff + mypy
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          # Cache pip downloads keyed on the lockfile — re-runs without dep
+          # changes finish in ~5s of install time instead of ~60s.
+          cache: 'pip'
+          cache-dependency-path: requirements-lock.txt
+      - name: Install (lockfile + editable package)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install -e ".[dev]" --no-deps
+      - name: ruff
+        run: ruff check .
+      - name: mypy
+        run: mypy agents
+
+  test-python:
+    name: Python · pytest
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements-lock.txt
+      - name: Install (lockfile + editable package)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install -e ".[dev]" --no-deps
+      - name: pytest
+        run: pytest -q
+
   summary:
     name: PR summary comment
-    needs: [ detect, lint-infra, what-if-infra ]
+    needs: [ detect, lint-infra, what-if-infra, lint-python, test-python ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -109,8 +164,11 @@ jobs:
         uses: actions/github-script@v7
         env:
           INFRA_RAN: ${{ needs.detect.outputs.infra }}
+          PYTHON_RAN: ${{ needs.detect.outputs.python }}
           LINT_INFRA_RESULT: ${{ needs.lint-infra.result }}
           WHATIF_INFRA_RESULT: ${{ needs.what-if-infra.result }}
+          LINT_PYTHON_RESULT: ${{ needs.lint-python.result }}
+          TEST_PYTHON_RESULT: ${{ needs.test-python.result }}
         with:
           script: |
             const cell = (result, ran) => {
@@ -122,15 +180,18 @@ jobs:
             };
             const env = process.env;
             const infraRan = env.INFRA_RAN === 'true';
+            const pythonRan = env.PYTHON_RAN === 'true';
             const lines = [
               '## CI summary',
               '',
               '| Area | Status |',
               '|------|--------|',
-              `| Infra · Bicep lint | ${cell(env.LINT_INFRA_RESULT, infraRan)} |`,
-              `| Infra · what-if    | ${cell(env.WHATIF_INFRA_RESULT, infraRan)} |`,
+              `| Infra · Bicep lint    | ${cell(env.LINT_INFRA_RESULT, infraRan)} |`,
+              `| Infra · what-if       | ${cell(env.WHATIF_INFRA_RESULT, infraRan)} |`,
+              `| Python · ruff + mypy  | ${cell(env.LINT_PYTHON_RESULT, pythonRan)} |`,
+              `| Python · pytest       | ${cell(env.TEST_PYTHON_RESULT, pythonRan)} |`,
             ];
-            if (!infraRan) {
+            if (!infraRan && !pythonRan) {
               lines.push('', '_No code paths touched — all area checks skipped._');
             }
             const sha = context.payload.pull_request.head.sha.slice(0, 7);
