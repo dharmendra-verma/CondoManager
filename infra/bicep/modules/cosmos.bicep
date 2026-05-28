@@ -9,10 +9,11 @@
 // account is allowed per Azure subscription, so prod will need to override
 // `enableFreeTier` to false if the subscription already has one.
 //
-// All four containers share the database-level 1000 RU/s throughput pool
-// (the maximum the free tier covers) — keeps cost predictable across the
-// foundation phase. Containers can be split out to dedicated throughput
-// later without re-creating the database.
+// Throughput layout (free-tier 1000 RU/s ceiling):
+//   * database (shared) ........... 600 RU/s — tenants, tickets, conversations
+//   * policies-vector (dedicated) . 400 RU/s — Cosmos rejects vector indexing
+//                                              on shared-throughput containers
+// Total = 1000 RU/s, fully covered by the free tier.
 
 targetScope = 'resourceGroup'
 
@@ -34,10 +35,15 @@ param enableFreeTier bool = true
 @maxValue(4096)
 param vectorDimensions int = 1536
 
-@description('Shared database throughput in RU/s. 1000 is the free-tier ceiling and is shared across all containers in this database.')
+@description('Shared database throughput in RU/s, used by tenants/tickets/conversations. Default 600 leaves 400 RU/s of the free-tier 1000 RU/s ceiling for the dedicated policies-vector container.')
 @minValue(400)
 @maxValue(1000000)
-param databaseThroughput int = 1000
+param databaseThroughput int = 600
+
+@description('Dedicated throughput in RU/s for the policies-vector container. Vector indexing is not supported on shared-throughput containers, so this container must carry its own throughput.')
+@minValue(400)
+@maxValue(1000000)
+param vectorContainerThroughput int = 400
 
 var accountName = 'cosmos-condomanager-${env}'
 var databaseName = 'condomanager'
@@ -190,6 +196,11 @@ resource policiesVectorContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
           }
         ]
       }
+    }
+    // Cosmos rejects vector indexing on containers that inherit the database's
+    // shared throughput — this container must have its own dedicated RU/s.
+    options: {
+      throughput: vectorContainerThroughput
     }
   }
 }
