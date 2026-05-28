@@ -117,7 +117,7 @@ def main() -> int:
         "embedding": embedding,
     }
 
-    print(f"▶  Inserting smoke-test doc id={doc_id} into {args.database}/{args.container}")
+    print(f">  Inserting smoke-test doc id={doc_id} into {args.database}/{args.container}")
     try:
         container.create_item(body=sample)
     except exceptions.CosmosHttpResponseError as e:
@@ -138,7 +138,7 @@ def main() -> int:
             {"name": "@qv", "value": embedding},
             {"name": "@tenantId", "value": tenant_id},
         ]
-        print("▶  Running VectorDistance() query")
+        print(">  Running VectorDistance() query")
         results = list(
             container.query_items(
                 query=query,
@@ -158,14 +158,14 @@ def main() -> int:
             )
             return 1
 
-        print(f"   ✓ nearest match: id={top['id']} distance={top.get('distance')}")
-        print("✅ Cosmos vector-search smoke-test PASSED")
+        print(f"   OK nearest match: id={top['id']} distance={top.get('distance')}")
+        print("PASS: Cosmos vector-search smoke-test")
         return 0
     finally:
         # Clean up regardless of query outcome so reruns don't accumulate junk.
         try:
             container.delete_item(item=doc_id, partition_key=tenant_id)
-            print(f"▶  Deleted smoke-test doc id={doc_id}")
+            print(f">  Deleted smoke-test doc id={doc_id}")
         except exceptions.CosmosResourceNotFoundError:
             pass
 
