@@ -1,4 +1,4 @@
-# Infra deploy pipeline — CM-15 (single-RG topology, RG-scoped SP)
+# Infra deploy pipeline — CM-15 (single-RG topology, RG-scoped SP), CM-16 (Container Apps), CM-17 (Cosmos)
 # Triggers:
 #   * Pull request that touches infra/ → bicep build + what-if (no apply)
 #   * Push to main that touches infra/ → bicep build + deploy into the RG
@@ -78,11 +78,15 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: az deployment group what-if
+        # `env` is also defaulted in main.parameters.json; the CLI override
+        # keeps the deploy target visible at the workflow level and matches
+        # what deploy-rg uses below.
         run: |
           az deployment group what-if \
             --resource-group rg-condomanager \
             --template-file infra/bicep/main.bicep \
-            --parameters infra/bicep/main.parameters.json
+            --parameters infra/bicep/main.parameters.json \
+            --parameters env=dev
 
   deploy-rg:
     name: Deploy → rg-condomanager
@@ -101,6 +105,7 @@ jobs:
         run: |
           az deployment group create \
             --resource-group rg-condomanager \
-            --name cm15-rg-${{ github.run_number }} \
+            --name cm-rg-${{ github.run_number }} \
             --template-file infra/bicep/main.bicep \
-            --parameters infra/bicep/main.parameters.json
+            --parameters infra/bicep/main.parameters.json \
+            --parameters env=dev

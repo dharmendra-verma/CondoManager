@@ -38,21 +38,24 @@ Every resource provisioned by Bicep MUST carry these tags. The schema lives in
 
 ```
 infra/
-└── bicep/
-    ├── main.bicep                            # RG-scoped: orchestrates all modules
-    ├── tags.bicep                            # Reusable tag schema (env: dev|prod|shared)
-    ├── main.parameters.json                  # Single parameters file (env=dev today)
-    └── modules/                              # Per-resource Bicep modules (CM-16+)
-        ├── vnet.bicep                        # VNet + /23 subnet delegated to Container Apps
-        ├── log-analytics.bicep               # Log Analytics workspace for app logs
-        ├── container-apps-env.bicep          # Container Apps Managed Environment (Consumption)
-        └── container-app.bicep               # Hello-world Container App (smoke-test surface)
+├── bicep/
+│   ├── main.bicep                            # RG-scoped: orchestrates all modules
+│   ├── tags.bicep                            # Reusable tag schema (env: dev|prod|shared)
+│   ├── main.parameters.json                  # Single parameters file (env=dev today)
+│   └── modules/                              # Per-resource Bicep modules
+│       ├── vnet.bicep                        # VNet + /23 subnet delegated to Container Apps (CM-16)
+│       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
+│       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
+│       ├── container-app.bicep               # Hello-world Container App (CM-16)
+│       └── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
+└── scripts/
+    └── cosmos-smoke-test.py                  # Post-deploy validation for Cosmos vector search (CM-17)
 .github/
 └── workflows/
-    └── infra-deploy.yml       # CI: lint → what-if → deploy (single RG)
+    └── infra-deploy.yml                      # CI: lint → what-if → deploy (single RG)
 tests/
 └── infra/
-    └── test_bicep_lint.sh     # Lint test runs in CI on every PR
+    └── test_bicep_lint.sh                    # Lint test runs in CI on every PR
 ```
 
 ## How CI works
@@ -122,16 +125,19 @@ In `Settings → Environments → New environment`:
 
 The shared RG (`rg-condomanager`) is bootstrapped out-of-band — see
 `infra/scripts/setup-azure-oidc.sh`. Once it exists, all subsequent
-deployments are RG-scoped:
+deployments are RG-scoped. `main.bicep` is resource-group scoped and
+requires the `env` parameter (controls naming of per-env resources like
+`cosmos-condomanager-<env>`):
 
 ```bash
 az login
 az account set --subscription <SUBSCRIPTION_ID>
 az deployment group create \
   --resource-group rg-condomanager \
-  --name cm-manual \
+  --name cm-manual-$(date +%s) \
   --template-file infra/bicep/main.bicep \
-  --parameters infra/bicep/main.parameters.json
+  --parameters infra/bicep/main.parameters.json \
+  --parameters env=dev
 ```
 
 ## Container Apps environment (CM-16)
@@ -176,15 +182,78 @@ curl -i "https://${FQDN}/"
 # expected: HTTP/2 200 + a "Hello, world!" body from mcr.microsoft.com/k8s/demo/hello-app
 ```
 
+## Cosmos DB (CM-17)
+
+A single Cosmos DB account per environment hosts both transactional data
+and RAG vector embeddings.
+
+| Aspect            | Value                                                            |
+|-------------------|------------------------------------------------------------------|
+| Account name      | `cosmos-condomanager-<env>`                                      |
+| API               | NoSQL (Core SQL)                                                 |
+| Capabilities      | `EnableNoSQLVectorSearch`                                        |
+| Consistency       | Session                                                          |
+| Free tier         | Enabled by default (25 GB + 1000 RU/s). One per subscription.    |
+| Database          | `condomanager` — shared throughput, 1000 RU/s                    |
+| Region            | `eastus2`                                                        |
+
+### Containers
+
+| Container         | Partition key  | Notes                                          |
+|-------------------|----------------|------------------------------------------------|
+| `tenants`         | `/id`          | One doc per tenant; point-reads by tenant ID   |
+| `tickets`         | `/tenantId`    | Tenant-scoped ticket queries stay single-part. |
+| `conversations`   | `/ticketId`    | All messages for a ticket live in one partition|
+| `policies-vector` | `/tenantId`    | RAG embeddings + DiskANN index on `/embedding` |
+
+### Vector search
+
+`policies-vector` carries a `vectorEmbeddingPolicy` and a DiskANN
+`vectorIndex` on `/embedding`. The raw embedding floats are excluded
+from the standard index (saves RUs) — `VectorDistance()` SQL queries
+hit the DiskANN index instead.
+
+Default embedding dimensions: **1536** (matches OpenAI
+`text-embedding-ada-002` and `text-embedding-3-small`). Switch to 3072
+for `text-embedding-3-large` by overriding `cosmosVectorDimensions` in
+`main.parameters.json`.
+
+### Post-deploy smoke-test
+
+`infra/scripts/cosmos-smoke-test.py` validates AC #4 ("Sample insert +
+vector query validated"). Requires `azure-cosmos>=4.7.0`. Run AFTER
+`az deployment group create` succeeds:
+
+```bash
+pip install "azure-cosmos>=4.7.0"
+
+# Pull endpoint + key from the deployed account
+COSMOS_ENDPOINT=$(az cosmosdb show \
+  --resource-group rg-condomanager \
+  --name cosmos-condomanager-dev \
+  --query documentEndpoint -o tsv)
+COSMOS_KEY=$(az cosmosdb keys list \
+  --resource-group rg-condomanager \
+  --name cosmos-condomanager-dev \
+  --query primaryMasterKey -o tsv)
+
+export COSMOS_ENDPOINT COSMOS_KEY
+python infra/scripts/cosmos-smoke-test.py
+```
+
+The script inserts a dummy 1536-dim vector, queries it back with
+`VectorDistance()`, asserts the inserted doc is the nearest neighbour,
+and cleans up. Exit 0 means the account is wired correctly.
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,
-following the CM-16 pattern: accept `env`, `location`, and `tags` params,
-emit any resource IDs that downstream modules need as outputs, and let
-`main.bicep` chain them in dependency order.
+following the CM-16 / CM-17 pattern: accept `env`, `location`, and `tags`
+params, emit any resource IDs downstream modules need as outputs, and
+let `main.bicep` chain them in dependency order.
 
 ```bicep
-// example: cosmos.bicep (CM-17, illustrative)
+// example: keyvault.bicep (CM-18, illustrative)
 targetScope = 'resourceGroup'
 
 @allowed([ 'dev', 'prod' ])
@@ -192,8 +261,8 @@ param env string
 param location string
 param tags object
 
-resource cosmosDev 'Microsoft.DocumentDB/databaseAccounts@2024-08-15' = {
-  name: 'cosmos-condomanager-${env}'
+resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
+  name: 'kv-condomanager-${env}'
   location: location
   tags: tags
   // ...
@@ -203,8 +272,8 @@ resource cosmosDev 'Microsoft.DocumentDB/databaseAccounts@2024-08-15' = {
 Then wire it into `main.bicep`:
 
 ```bicep
-module cosmos './modules/cosmos.bicep' = {
-  name: 'cosmos-${env}'
+module keyvault './modules/keyvault.bicep' = {
+  name: 'kv-${env}'
   params: {
     env: env
     location: location

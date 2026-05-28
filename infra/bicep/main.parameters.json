@@ -2,8 +2,8 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "env": {
-      "value": "dev"
-    }
+    "env": { "value": "dev" },
+    "cosmosEnableFreeTier": { "value": true },
+    "cosmosVectorDimensions": { "value": 1536 }
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 (single-RG topology) + CM-16 (Container Apps modules)
+# Bicep lint test — CM-15 (single-RG topology) + CM-16 (Container Apps modules) + CM-17 (Cosmos DB)
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -13,6 +13,9 @@
 #  10. (CM-16) VNet subnet is delegated to Microsoft.App/environments
 #  11. (CM-16) Container App defaults to minReplicas: 0 (free-tier guard)
 #  12. (CM-16) compiled ARM contains the Container Apps + VNet resource types
+#  13. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
+#      policies-vector, declares the four required containers, defaults
+#      enableFreeTier to true, and is wired into main.bicep
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/infra-deploy.yml
@@ -56,8 +59,8 @@ echo "▶  Compiling tags.bicep → ARM"
 bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
-echo "▶  Compiling CM-16 modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app")
+echo "▶  Compiling per-resource modules in $MODULES_DIR"
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -80,7 +83,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -141,8 +144,8 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying compiled main.json includes Container Apps + VNet resource types"
-for type in "Microsoft.Network/virtualNetworks" "Microsoft.OperationalInsights/workspaces" "Microsoft.App/managedEnvironments" "Microsoft.App/containerApps"; do
+echo "▶  Verifying compiled main.json includes Container Apps, VNet, and Cosmos resource types"
+for type in "Microsoft.Network/virtualNetworks" "Microsoft.OperationalInsights/workspaces" "Microsoft.App/managedEnvironments" "Microsoft.App/containerApps" "Microsoft.DocumentDB/databaseAccounts"; do
   if grep -Fq "$type" /tmp/main.json; then
     echo "   ✓ $type present in compiled ARM"
   else
@@ -190,6 +193,56 @@ for env in dev staging prod; do
   fi
 done
 echo "   ✓ no stale per-env parameter files"
+
+# ---------------------------------------------------------------------------
+# CM-17 — Cosmos DB module checks
+# ---------------------------------------------------------------------------
+
+COSMOS="$MODULES_DIR/cosmos.bicep"
+
+echo "▶  Verifying cosmos.bicep enables the NoSQL vector-search capability"
+if grep -Fq "EnableNoSQLVectorSearch" "$COSMOS"; then
+  echo "   ✓ EnableNoSQLVectorSearch capability declared"
+else
+  echo "   ✗ EnableNoSQLVectorSearch capability MISSING — vector indexes won't be accepted"
+  FAIL=1
+fi
+
+echo "▶  Verifying cosmos.bicep defines a diskANN vector index"
+if grep -Fq "diskANN" "$COSMOS"; then
+  echo "   ✓ diskANN vector index present"
+else
+  echo "   ✗ diskANN vector index MISSING from cosmos.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying cosmos.bicep declares all four required containers"
+REQUIRED_CONTAINERS=("tenants" "tickets" "conversations" "policies-vector")
+for c in "${REQUIRED_CONTAINERS[@]}"; do
+  # Match the container resource id: `id: 'tenants'`, `id: 'policies-vector'`, …
+  if grep -Eq "id:[[:space:]]+'$c'" "$COSMOS"; then
+    echo "   ✓ container '$c' declared"
+  else
+    echo "   ✗ container '$c' MISSING from cosmos.bicep"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying cosmos.bicep enables the free tier by default"
+if grep -Eq "param enableFreeTier bool = true" "$COSMOS"; then
+  echo "   ✓ enableFreeTier defaults to true"
+else
+  echo "   ✗ enableFreeTier default is not true — AC requires free-tier-by-default"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires in the cosmos module"
+if grep -Fq "modules/cosmos.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ main.bicep references modules/cosmos.bicep"
+else
+  echo "   ✗ main.bicep does NOT reference modules/cosmos.bicep"
+  FAIL=1
+fi
 
 if [ $FAIL -ne 0 ]; then
   echo ""
