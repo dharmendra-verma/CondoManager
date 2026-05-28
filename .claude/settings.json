@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Drop this at .claude/settings.json in the repo root. Permission allow-list scoped to what the Planner/Dev workflow needs. Pre-approving these commands means Claude Code does NOT ask you for confirmation each time. The agent's reasoning (see CLAUDE.md §9 and AGENT_RULES.md) decides WHEN to run them; this file says they're OK to run without a prompt. Anything not on this list — destructive deletes, force-push to main, sudo, piped curl-to-shell — still prompts.",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "TodoWrite",
+
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(bicep:*)",
+      "Bash(az account show)",
+      "Bash(az account list)",
+      "Bash(az deployment sub validate:*)",
+      "Bash(az deployment sub what-if:*)",
+      "Bash(az group show:*)",
+      "Bash(az group list:*)",
+
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(diff:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(touch:*)",
+      "Bash(echo:*)",
+      "Bash(pwd)",
+      "Bash(which:*)",
+      "Bash(test:*)",
+
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip install:*)",
+      "Bash(pip list)",
+      "Bash(pip show:*)",
+      "Bash(pytest:*)",
+      "Bash(ruff:*)",
+      "Bash(mypy:*)",
+      "Bash(black:*)",
+
+      "Bash(npm install)",
+      "Bash(npm ci)",
+      "Bash(npm run:*)",
+      "Bash(npm test)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+
+      "Bash(bash tests/**)",
+      "Bash(bash infra/scripts/**)",
+      "Bash(./tests/**)",
+      "Bash(./infra/scripts/**)",
+
+      "WebFetch",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf /:*)",
+      "Bash(rm -rf ~:*)",
+      "Bash(rm -rf $HOME:*)",
+      "Bash(git push --force origin main:*)",
+      "Bash(git push -f origin main:*)",
+      "Bash(git push --force-with-lease origin main:*)",
+      "Bash(sudo:*)",
+      "Bash(curl * | bash)",
+      "Bash(wget * | bash)"
+    ]
+  }
+}
