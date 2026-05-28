@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 (single-RG topology, RG-scoped SP), CM-17 (Cosmos)
+# Bicep lint test — CM-15 (single-RG topology) + CM-16 (Container Apps modules) + CM-17 (Cosmos DB)
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
 #   3. tags.bicep declares the full 5-tag schema for downstream resources
 #   4. tags.bicep restricts env to dev / prod / shared (no rogue env names)
-#   5. main.parameters.json exists and is valid JSON
+#   5. main.parameters.json exists, is valid JSON, and declares env
 #   6. workflow targets rg-condomanager via `az deployment group …`
-#   7. cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on the
-#      policies-vector container and main.bicep wires the module in
+#   7. (CM-16) all module files in infra/bicep/modules/ compile and are RG-scoped
+#   8. (CM-16) per-env modules restrict env to dev / prod
+#   9. (CM-16) Container Apps env uses the Consumption workload profile
+#  10. (CM-16) VNet subnet is delegated to Microsoft.App/environments
+#  11. (CM-16) Container App defaults to minReplicas: 0 (free-tier guard)
+#  12. (CM-16) compiled ARM contains the Container Apps + VNet resource types
+#  13. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
+#      policies-vector, declares the four required containers, defaults
+#      enableFreeTier to true, and is wired into main.bicep
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/infra-deploy.yml
@@ -17,21 +24,52 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BICEP_DIR="$ROOT/infra/bicep"
+MODULES_DIR="$BICEP_DIR/modules"
 FAIL=0
 
-echo "▶  Bicep CLI version: $(bicep --version)"
+# Resolve the Bicep CLI. CI installs the standalone binary at /usr/local/bin/bicep
+# (see .github/workflows/infra-deploy.yml). On dev machines without the standalone
+# binary we fall back to `az bicep`, which uses the same engine.
+if command -v bicep >/dev/null 2>&1; then
+  BICEP_BIN="standalone"
+  echo "▶  Bicep CLI version: $(bicep --version)"
+elif command -v az >/dev/null 2>&1 && az bicep version >/dev/null 2>&1; then
+  BICEP_BIN="az"
+  echo "▶  Bicep CLI (via az): $(az bicep version 2>&1 | tail -n1)"
+else
+  echo "❌ Neither standalone 'bicep' nor 'az bicep' is available. Install one before running the lint."
+  exit 1
+fi
+
+bicep_build() {
+  local src="$1"
+  local out="$2"
+  if [ "$BICEP_BIN" = "standalone" ]; then
+    bicep build "$src" --outfile "$out"
+  else
+    az bicep build --file "$src" --outfile "$out" >/dev/null
+  fi
+}
 
 echo "▶  Compiling main.bicep → ARM"
-bicep build "$BICEP_DIR/main.bicep" --outfile /tmp/main.json
+bicep_build "$BICEP_DIR/main.bicep" /tmp/main.json
 echo "   ✓ main.bicep compiles cleanly"
 
 echo "▶  Compiling tags.bicep → ARM"
-bicep build "$BICEP_DIR/tags.bicep" --outfile /tmp/tags.json
+bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
-echo "▶  Compiling modules/cosmos.bicep → ARM"
-bicep build "$BICEP_DIR/modules/cosmos.bicep" --outfile /tmp/cosmos.json
-echo "   ✓ modules/cosmos.bicep compiles cleanly"
+echo "▶  Compiling per-resource modules in $MODULES_DIR"
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos")
+for m in "${MODULES[@]}"; do
+  if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
+    echo "   ✗ module $m.bicep MISSING"
+    FAIL=1
+    continue
+  fi
+  bicep_build "$MODULES_DIR/$m.bicep" "/tmp/$m.json"
+  echo "   ✓ $m.bicep compiles cleanly"
+done
 
 REQUIRED_TAGS=("env" "owner" "cost-center" "project" "managed-by")
 echo "▶  Verifying required tags exist in tags.bicep (for downstream resources)"
@@ -44,13 +82,15 @@ for tag in "${REQUIRED_TAGS[@]}"; do
   fi
 done
 
-echo "▶  Verifying targetScope is resourceGroup in main.bicep"
-if grep -Fq "targetScope = 'resourceGroup'" "$BICEP_DIR/main.bicep"; then
-  echo "   ✓ main.bicep is resource-group scoped"
-else
-  echo "   ✗ main.bicep is NOT resource-group scoped — RG-scoped SP cannot deploy it"
-  FAIL=1
-fi
+echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep"; do
+  if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
+    echo "   ✓ $(basename "$f") is resource-group scoped"
+  else
+    echo "   ✗ $(basename "$f") is NOT resource-group scoped — RG-scoped SP cannot deploy it"
+    FAIL=1
+  fi
+done
 
 echo "▶  Verifying workflow targets rg-condomanager via 'az deployment group'"
 WF="$ROOT/.github/workflows/infra-deploy.yml"
@@ -69,7 +109,52 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying main.parameters.json exists and is valid JSON"
+echo "▶  Verifying per-env modules restrict env to dev/prod (no 'shared')"
+for m in "${MODULES[@]}"; do
+  if grep -Eq "@allowed\\(\\s*\\[\\s*'dev',\\s*'prod'\\s*\\]" "$MODULES_DIR/$m.bicep"; then
+    echo "   ✓ env in $m.bicep is constrained to dev/prod"
+  else
+    echo "   ✗ env @allowed list in $m.bicep does not match dev/prod"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying Container Apps env uses Consumption workload profile"
+if grep -Fq "'Consumption'" "$MODULES_DIR/container-apps-env.bicep" \
+   && grep -Fq "workloadProfileType: 'Consumption'" "$MODULES_DIR/container-apps-env.bicep"; then
+  echo "   ✓ Consumption workload profile present (free-tier eligible)"
+else
+  echo "   ✗ Consumption workload profile missing from container-apps-env.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying VNet subnet is delegated to Microsoft.App/environments"
+if grep -Fq "serviceName: 'Microsoft.App/environments'" "$MODULES_DIR/vnet.bicep"; then
+  echo "   ✓ subnet delegation to Microsoft.App/environments present"
+else
+  echo "   ✗ VNet subnet is NOT delegated to Microsoft.App/environments — Container Apps will fail to deploy"
+  FAIL=1
+fi
+
+echo "▶  Verifying Container App defaults to minReplicas 0 (free-tier guard)"
+if grep -Eq "param\\s+minReplicas\\s+int\\s*=\\s*0" "$MODULES_DIR/container-app.bicep"; then
+  echo "   ✓ minReplicas defaults to 0 (scale-to-zero when idle)"
+else
+  echo "   ✗ minReplicas does NOT default to 0 in container-app.bicep — could burn vCPU-seconds"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled main.json includes Container Apps, VNet, and Cosmos resource types"
+for type in "Microsoft.Network/virtualNetworks" "Microsoft.OperationalInsights/workspaces" "Microsoft.App/managedEnvironments" "Microsoft.App/containerApps" "Microsoft.DocumentDB/databaseAccounts"; do
+  if grep -Fq "$type" /tmp/main.json; then
+    echo "   ✓ $type present in compiled ARM"
+  else
+    echo "   ✗ $type MISSING from compiled ARM"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying main.parameters.json exists, is valid JSON, and declares env"
 pfile="$BICEP_DIR/main.parameters.json"
 if [ -f "$pfile" ]; then
   echo "   ✓ $pfile present"
@@ -87,6 +172,12 @@ if [ -f "$pfile" ]; then
     echo "   ✓ valid JSON"
   else
     echo "   ✗ INVALID JSON"
+    FAIL=1
+  fi
+  if "$PY" -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if 'env' in d.get('parameters', {}) else 1)" "$pfile" 2>/dev/null; then
+    echo "   ✓ 'env' parameter declared"
+  else
+    echo "   ✗ 'env' parameter missing from main.parameters.json"
     FAIL=1
   fi
 else
@@ -107,7 +198,7 @@ echo "   ✓ no stale per-env parameter files"
 # CM-17 — Cosmos DB module checks
 # ---------------------------------------------------------------------------
 
-COSMOS="$BICEP_DIR/modules/cosmos.bicep"
+COSMOS="$MODULES_DIR/cosmos.bicep"
 
 echo "▶  Verifying cosmos.bicep enables the NoSQL vector-search capability"
 if grep -Fq "EnableNoSQLVectorSearch" "$COSMOS"; then
@@ -150,14 +241,6 @@ if grep -Fq "modules/cosmos.bicep" "$BICEP_DIR/main.bicep"; then
   echo "   ✓ main.bicep references modules/cosmos.bicep"
 else
   echo "   ✗ main.bicep does NOT reference modules/cosmos.bicep"
-  FAIL=1
-fi
-
-echo "▶  Verifying main.parameters.json supplies the env parameter"
-if grep -Fq '"env"' "$BICEP_DIR/main.parameters.json"; then
-  echo "   ✓ env parameter present in main.parameters.json"
-else
-  echo "   ✗ env parameter MISSING from main.parameters.json"
   FAIL=1
 fi
 

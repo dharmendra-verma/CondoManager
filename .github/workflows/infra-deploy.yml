@@ -1,4 +1,4 @@
-# Infra deploy pipeline — CM-15 (single-RG topology, RG-scoped SP), CM-17 (Cosmos)
+# Infra deploy pipeline — CM-15 (single-RG topology, RG-scoped SP), CM-16 (Container Apps), CM-17 (Cosmos)
 # Triggers:
 #   * Pull request that touches infra/ → bicep build + what-if (no apply)
 #   * Push to main that touches infra/ → bicep build + deploy into the RG
