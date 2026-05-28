@@ -15,23 +15,39 @@ Phased delivery is tracked in Jira project **CM**
 * **Two deployment stages** — `dev` and `prod` — implemented as GitHub
   Environments. Prod requires manual approval.
 
+## For human engineers
+
+Start with [`docs/INFRA.md`](docs/INFRA.md) for the one-time Azure
+service-principal, GitHub secrets, and GitHub Environments setup.
+
+## For AI coding agents (Claude Code, Cursor, etc.)
+
+**Read these two files first** — they encode every decision already made so
+you don't have to re-ask the human:
+
+* [`CLAUDE.md`](CLAUDE.md) — project context, conventions, tech stack, naming,
+  tagging, story workflow, Jira IDs.
+* [`AGENT_RULES.md`](AGENT_RULES.md) — autonomy contract. Lists what to do
+  without asking and the (short) list of things that still need human OK.
+
+In short: **act, then report**. Don't ask permission for every step.
+
 ## Repository layout
 
 ```
 .
-├── infra/                # Bicep IaC (this is where CM-15 lives)
-├── .github/workflows/    # GitHub Actions: lint, what-if, deploy
-├── tests/                # Per-area test scripts
-└── docs/                 # Operator docs (start with docs/INFRA.md)
+├── CLAUDE.md, AGENT_RULES.md     # Agent briefing (read these first)
+├── infra/                        # Bicep IaC
+├── .github/workflows/            # GitHub Actions: lint, what-if, deploy
+├── tests/                        # Per-area test scripts
+└── docs/                         # Operator docs
 ```
 
-## First-time setup
+## Conventions (the short version)
 
-See [`docs/INFRA.md`](docs/INFRA.md) for the one-time Azure service-principal,
-GitHub secrets, and GitHub Environments setup.
+* **Branch naming:** `feature/<JIRA-KEY>-<short-slug>`
+* **Commit messages:** Conventional Commits, prefixed with the Jira key,
+  e.g. `feat(infra): CM-15 provision shared RG (dev+prod)`.
+* **PR titles:** include the Jira key so smart commits sync status to Jira.
 
-## Conventions
-
-* **Branch naming:** `feature/<JIRA-KEY>-<short-slug>` (e.g. `feature/CM-15-azure-resource-groups`).
-* **Commit messages:** [Conventional Commits](https://www.conventionalcommits.org/), prefixed with the Jira key, e.g. `feat(infra): CM-15 provision shared RG (dev+prod)`.
-* **PR title:** include the Jira key so smart commits sync status back to Jira.
+See [`CLAUDE.md`](CLAUDE.md) §3 for the full set of conventions.
