@@ -29,11 +29,18 @@ with langgraph_node_span("triage", tenant_id=state.tenant_id, model="gpt-4o-mini
 
 | Var | Default | Effect |
 |---|---|---|
-| `OTEL_TRACES_EXPORTER` | `console` | `console` -> ConsoleSpanExporter; `otlp` -> OTLP-HTTP exporter (requires endpoint, see below); any other value -> no-op |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | OTLP-HTTP target. CM-22 will set this to the Application Insights / Azure Monitor endpoint. When unset, `OTEL_TRACES_EXPORTER=otlp` falls back to ConsoleSpanExporter rather than crashing. |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | _(unset)_ | **CM-22.** When set to a real value, delegates to `azure-monitor-opentelemetry` (Azure Monitor exporter + Live Metrics + sampler). Takes precedence over `OTEL_TRACES_EXPORTER`. The CM-18 placeholder `REPLACE-ME` is treated as if-unset so the Container App boots before the post-deploy seed step. |
+| `OTEL_SAMPLER_RATIO` | `1.0` | **CM-22.** Client-side sampling ratio (Parent-based). `1.0` -> ParentBased(AlwaysOn); fractional values -> ParentBased(TraceIdRatioBased). Clamped to [0,1] with a warning on out-of-range. App Insights applies a second, server-side adaptive sampler on top (`SamplingPercentage` on the Bicep resource). |
+| `OTEL_TRACES_EXPORTER` | `console` | `console` -> ConsoleSpanExporter; `otlp` -> OTLP-HTTP exporter (requires endpoint, see below); any other value -> no-op. **Ignored when `APPLICATIONINSIGHTS_CONNECTION_STRING` is set.** |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | OTLP-HTTP target for non-App-Insights backends. When unset, `OTEL_TRACES_EXPORTER=otlp` falls back to ConsoleSpanExporter rather than crashing. |
 | `OTEL_EXPORTER_OTLP_HEADERS` | _(unset)_ | OTLP exporter headers (e.g. `Authorization=Bearer …`). Read by `OTLPSpanExporter` automatically. |
 | `OTEL_SERVICE_VERSION` | `0.1.0` | Goes into the `service.version` resource attribute. |
 | `OTEL_SERVICE_NAME` | _(set in code)_ | Overrides the `service_name` argument to `configure_otel`. Useful when the same image runs in multiple roles. |
+
+### Exporter precedence
+1. `APPLICATIONINSIGHTS_CONNECTION_STRING` set (and not `REPLACE-ME`) -> Azure Monitor distro
+2. `OTEL_TRACES_EXPORTER=otlp` AND `OTEL_EXPORTER_OTLP_ENDPOINT` set -> OTLP-HTTP
+3. Otherwise -> ConsoleSpanExporter (default; what tests + local dev use)
 
 `configure_otel(service_name=..., environment=...)` is idempotent — call
 it again on hot-reload, in tests, or from a serverless cold-start without
@@ -140,10 +147,64 @@ You'll see spans printed for the FastAPI handler, the outbound httpx
 call, and the openai call. Useful as a sanity check before wiring
 Application Insights (CM-22).
 
+## Application Insights backend (CM-22)
+
+Workspace-based App Insights (`appi-condomanager-<env>`, linked to the
+existing LAW from CM-16) is the OTLP backend. The connection string is
+held in Key Vault as `app-insights-connection-string` (CM-18 schema) and
+mounted into the Container App as `APPLICATIONINSIGHTS_CONNECTION_STRING`
+via native `secretRef` resolved through the User-Assigned MI. Once that
+env var has a real value, `configure_otel` flips into the Azure Monitor
+branch automatically.
+
+### Post-deploy one-time setup
+
+```bash
+# 1. Populate the KV secret from the deployment output (idempotent):
+bash infra/scripts/seed-app-insights-secret.sh dev
+
+# 2. Force a new revision so the Container App picks up the seeded value:
+az containerapp update --name ca-hello-condomanager-dev --resource-group rg-condomanager
+
+# 3. Hit the app; spans should appear in App Insights UI within ~30s.
+```
+
+The seed script reads `properties.outputs.appInsightsConnectionString.value`
+from the latest deployment and writes it into KV. It refuses to overwrite
+a real value that differs from the deployment output — operator rotations
+are preserved.
+
+### Layered sampling (AC #3)
+
+* **SDK-side (Python).** `OTEL_SAMPLER_RATIO` (default 1.0) becomes a
+  `ParentBased` sampler — `ParentBased(AlwaysOn)` at 1.0, otherwise
+  `ParentBased(TraceIdRatioBased(r))`. Dev keeps 1.0; prod is typically
+  0.5 — set per env by the operator (Container App `env` or `secretRef`).
+* **Server-side (App Insights).** The `SamplingPercentage` property on
+  the Bicep resource (`appInsightsSamplingPercentage` param on `main.bicep`,
+  default 100 dev / 50 prod) drives App Insights' adaptive sampler at
+  ingestion. Halves prod cost without changing client behavior.
+
+Live Metrics is **unsampled** and rides above both samplers — operators
+get a real-time view of cost / latency / errors even when traces are
+heavily sampled.
+
+### Troubleshooting
+
+* **No spans in App Insights.** Verify the conn string was seeded:
+  `az keyvault secret show --vault-name kv-condomanager-dev --name app-insights-connection-string`.
+  If it's still `REPLACE-ME`, run `seed-app-insights-secret.sh dev`.
+* **`configure_azure_monitor` API change.** Pin in `requirements-lock.txt`
+  protects CI; if a bump breaks the `enable_live_metrics` or `sampler`
+  kwarg, fall back to constructing `AzureMonitorTraceExporter` + Live
+  Metrics manually (see `azure.monitor.opentelemetry.exporter`).
+* **Server-side sampling masks issues.** Temporarily flip
+  `SamplingPercentage` to 100 by redeploying with
+  `--parameters appInsightsSamplingPercentage=100`. Live Metrics stays
+  unsampled regardless.
+
 ## What comes next (forward references)
 
-* **CM-22** wires `OTEL_EXPORTER_OTLP_ENDPOINT` to Application Insights;
-  configures sampling (100% in dev, adaptive in prod); enables Live Metrics.
 * **CM-23** turns on `LANGCHAIN_TRACING_V2` for LangSmith in dev.
 * **CM-24** ships Langfuse Cloud Hobby for production LLM observations.
 * **CM-25** builds Log Analytics workbooks over the spans flowing into

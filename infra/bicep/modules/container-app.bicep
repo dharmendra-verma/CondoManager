@@ -1,5 +1,5 @@
 // container-app.bicep — Hello-world Container App (smoke-test surface).
-// Jira: CM-16 (initial)  | CM-18 (User-Assigned MI attachment)
+// Jira: CM-16 (initial)  | CM-18 (User-Assigned MI)  | CM-22 (App Insights via KV secretRef)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // Acts as the initial app shell so CM-16 has something to deploy. The image
@@ -16,6 +16,13 @@
 // and can read Key Vault secrets via DefaultAzureCredential. An empty string
 // (the default) keeps backward-compat for any caller that doesn't pass the
 // param — the `identity` block is omitted entirely in that case.
+//
+// CM-22: When `appInsightsKvSecretUri` is supplied (alongside the MI), the
+// platform pulls the App Insights connection string from KV at revision
+// start via `secretRef` and exposes it as APPLICATIONINSIGHTS_CONNECTION_STRING
+// on the container. Python's `configure_otel` reads that env var and switches
+// to the Azure Monitor exporter. Empty string omits both `secrets[]` and the
+// env var — back-compat for callers that don't wire App Insights.
 
 targetScope = 'resourceGroup'
 
@@ -55,8 +62,14 @@ param maxReplicas int = 1
 @description('Resource ID of a User-Assigned Managed Identity to attach. Empty string (default) omits the identity block entirely for backward-compat.')
 param userAssignedIdentityId string = ''
 
+@description('Key Vault secret URI (https://<vault>.vault.azure.net/secrets/<name>) for the App Insights connection string. Empty string (default) omits the App Insights env var entirely — back-compat for callers that do not wire App Insights. Requires userAssignedIdentityId to also be set, since the MI is what resolves the secretRef against KV.')
+param appInsightsKvSecretUri string = ''
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
+// Both must be present — Container Apps secretRef resolution requires the
+// identity to read the KV secret at revision start.
+var hasAppInsights = hasIdentity && !empty(appInsightsKvSecretUri)
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
@@ -80,6 +93,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
+      // KV-backed secret resolved through the MI at revision start.
+      // Container Apps caches the secret per revision; rotating the value in
+      // KV requires a new revision to pick it up — acceptable because the
+      // post-deploy seed script runs once and rotations are operator events.
+      secrets: hasAppInsights ? [
+        {
+          name: 'appinsights-conn'
+          identity: userAssignedIdentityId
+          keyVaultUrl: appInsightsKvSecretUri
+        }
+      ] : []
     }
     template: {
       containers: [
@@ -90,6 +114,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json(cpu)
             memory: memory
           }
+          env: hasAppInsights ? [
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              secretRef: 'appinsights-conn'
+            }
+          ] : []
         }
       ]
       scale: {

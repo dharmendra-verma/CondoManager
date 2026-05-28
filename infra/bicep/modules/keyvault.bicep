@@ -44,6 +44,10 @@ param secretNames array = [
   'langfuse-public-key'
   'langfuse-secret-key'
   'cosmos-connection-string'
+  // CM-22: Container Apps mounts this as APPLICATIONINSIGHTS_CONNECTION_STRING
+  // via secretRef. seed-app-insights-secret.sh populates it from the deployment
+  // output post-deploy; until then it sits as the CM-18 REPLACE-ME placeholder.
+  'app-insights-connection-string'
 ]
 
 var vaultName = 'kv-condomanager-${env}'

@@ -50,14 +50,16 @@ infra/
 │       ├── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
-│       └── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
+│       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
+│       └── app-insights.bicep                # Workspace-based App Insights, OTLP backend (CM-22)
 ├── docker/
 │   └── base/Dockerfile                       # Curated python:3.12-slim base image (CM-20)
 └── scripts/
     ├── cosmos-smoke-test.py                  # Post-deploy validation for Cosmos vector search (CM-17)
-    ├── seed-keyvault-secrets.sh              # Seed the 8 initial secret names with REPLACE-ME (CM-18)
+    ├── seed-keyvault-secrets.sh              # Seed the 9 initial secret names with REPLACE-ME (CM-18, +1 in CM-22)
     ├── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
-    └── acr-prune.sh                          # Basic-SKU equivalent of ACR retention policy (CM-20)
+    ├── acr-prune.sh                          # Basic-SKU equivalent of ACR retention policy (CM-20)
+    └── seed-app-insights-secret.sh           # Post-deploy: populate KV with the AppI conn string (CM-22)
 agents/
 └── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21)
 .github/
