@@ -134,14 +134,29 @@ rules above apply to both roles, with these role-specific additions:
   (This is the only "ask first" gate in the Planner workflow.)
 
 ### Dev Agent — additional autonomous actions
+- **Locate the local clone** (try `git rev-parse --show-toplevel`, then fall back to common dev paths). Only ask if none found.
+- **Sync main** with `git fetch && git checkout main && git pull --ff-only`.
 - Pick the next file from `Planning/planned/` (oldest mtime if user didn't name a key).
+- **Self-plan if no plan file exists** for a named story (act as Planner+Dev hybrid). Don't ask permission.
+- **Derive slug + branch name autonomously** from the Jira summary (rules in `CLAUDE.md` §9 "Slug derivation").
+- **Create the git worktree** at `../wt-<JIRA-KEY>-<slug>` based on `main`. Reuse if it already exists.
+- `cd` into the worktree for all subsequent work.
 - `mv` plan file `planned/ → inprogress/` and update `status` + `inprogress_at`.
-- Create the feature branch, implement per the plan's file map.
+- Implement per the plan's file map.
 - Run lint, tests, formatters; iterate to green.
 - Commit and push the feature branch.
-- Open the PR with a generated description (plan summary + test results + verdict).
+- Open the PR with `gh pr create` (auto-generated body from plan + test results + review verdict). If `gh` is missing, print the compare URL.
 - `mv` plan file `inprogress/ → completed/` and update `status` + `completed_at` + `pr_url`.
 - Post a closing Jira comment with deliverables, diffstat, PR link, CI status.
+
+### What this autonomy explicitly covers (never ask the user about these)
+- "Should I create a worktree?" — **yes, always.**
+- "Should I name the branch X?" — **derive it from the rules in §9. Don't ask.**
+- "Should I `cd` into the worktree?" — **yes, that's the workflow.**
+- "Should I `mv` the plan file?" — **yes, that's how status moves.**
+- "Should I open the PR?" — **yes, the workflow ends with PR opened.**
+- "Should I transition Jira to In Progress?" — **yes (Planner step 3).**
+- "Should I post a Jira comment with the plan / results?" — **yes (both roles).**
 
 ### Dev Agent — still ASK FIRST
 - Anything in `AGENT_RULES.md` "🛑 ASK FIRST" above (merge to main, Jira → Done, etc.).
