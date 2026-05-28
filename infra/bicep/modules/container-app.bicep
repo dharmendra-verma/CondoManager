@@ -1,14 +1,15 @@
 // container-app.bicep — Hello-world Container App (smoke-test surface).
 // Jira: CM-16  | Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
-// Acts as the initial app shell so CM-16 has something to deploy. The
-// hello-app image is pulled from MCR (no ACR yet — that's CM-18). Scale 0-1
-// + 0.25 vCPU / 0.5 Gi keeps idle cost at zero and stays well inside the
-// 180K vCPU-sec/mo Consumption free grant even if poked frequently.
+// Acts as the initial app shell so CM-16 has something to deploy. The image
+// is Microsoft's official Container Apps quickstart hello-world, pulled from
+// MCR (no ACR yet — that's CM-18). Scale 0-1 + 0.25 vCPU / 0.5 Gi keeps idle
+// cost at zero and stays well inside the 180K vCPU-sec/mo Consumption free
+// grant even if poked frequently.
 //
-// External ingress + targetPort 8080 (the port mcr.microsoft.com/k8s/demo/
-// hello-app:1.0 listens on). transport `auto` lets the platform pick HTTP/1.1
-// vs HTTP/2 based on the client.
+// External ingress + targetPort 80 (the port mcr.microsoft.com/azuredocs/
+// containerapps-helloworld serves on). transport `auto` lets the platform
+// pick HTTP/1.1 vs HTTP/2 based on the client.
 
 targetScope = 'resourceGroup'
 
@@ -25,11 +26,11 @@ param tags object
 @description('Resource ID of the parent Container Apps Managed Environment.')
 param environmentId string
 
-@description('Hello-world image. MCR is used until ACR (CM-18) lands.')
-param image string = 'mcr.microsoft.com/k8s/demo/hello-app:1.0'
+@description('Hello-world image. Microsoft\'s official Container Apps quickstart sample on MCR (no auth needed); will move to ACR with CM-18.')
+param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
-@description('Port the hello-app container listens on.')
-param targetPort int = 8080
+@description('Port the container listens on. The containerapps-helloworld image serves on 80.')
+param targetPort int = 80
 
 @description('CPU cores allocated to the container. 0.25 is the Consumption-plan minimum.')
 param cpu string = '0.25'
