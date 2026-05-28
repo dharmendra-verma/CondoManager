@@ -46,10 +46,14 @@ infra/
 │       ├── vnet.bicep                        # VNet + /23 subnet delegated to Container Apps (CM-16)
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
-│       ├── container-app.bicep               # Hello-world Container App (CM-16)
-│       └── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
+│       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
+│       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
+│       └── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 └── scripts/
-    └── cosmos-smoke-test.py                  # Post-deploy validation for Cosmos vector search (CM-17)
+    ├── cosmos-smoke-test.py                  # Post-deploy validation for Cosmos vector search (CM-17)
+    ├── seed-keyvault-secrets.sh              # Seed the 8 initial secret names with REPLACE-ME (CM-18)
+    └── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
 .github/
 └── workflows/
     └── infra-deploy.yml                      # CI: lint → what-if → deploy (single RG)
@@ -245,39 +249,92 @@ The script inserts a dummy 1536-dim vector, queries it back with
 `VectorDistance()`, asserts the inserted doc is the nearest neighbour,
 and cleans up. Exit 0 means the account is wired correctly.
 
+## Key Vault & Managed Identity (CM-18)
+
+Key Vault is the single secret store. The only principal that can read
+secret values is a User-Assigned Managed Identity attached to every
+CondoManager workload.
+
+| Aspect          | Value                                                       |
+|-----------------|-------------------------------------------------------------|
+| Vault name      | `kv-condomanager-<env>`                                     |
+| Mode            | RBAC (no access policies)                                   |
+| SKU             | Standard                                                    |
+| Soft-delete     | 90 days                                                     |
+| Purge protect.  | Enabled (irreversible — vault name reserved 90d after delete) |
+| Public network  | `Enabled` for now; private endpoint in a later story        |
+| MI name         | `id-condomanager-<env>` (User-Assigned, shared by all apps) |
+| Role on vault   | `Key Vault Secrets User` (read-only on values)              |
+
+User-Assigned (not System-Assigned) so the MI survives Container App
+re-creation, can be RBAC-granted before any app exists, and is shared
+by multiple workloads with a single role assignment per resource.
+
+### Initial secret schema
+
+`infra/bicep/modules/keyvault.bicep` declares the names (`secretNames`
+param default); `infra/scripts/seed-keyvault-secrets.sh` populates each
+with the literal placeholder `REPLACE-ME` so the schema exists. Real
+values are NEVER written through IaC or the seed script — they're set
+out-of-band by operators with `az keyvault secret set`. The lint test
+diffs the two name lists to prevent drift.
+
+| Secret name                 | Source                                              | Rotation                       |
+|-----------------------------|-----------------------------------------------------|--------------------------------|
+| `azure-openai-key`          | Azure OpenAI portal                                 | Every 90d; key1 ↔ key2         |
+| `twilio-account-sid`        | Twilio console                                      | Rarely changes                 |
+| `twilio-auth-token`         | Twilio console                                      | Quarterly                      |
+| `twilio-whatsapp-number`    | Twilio console (phone number, not a secret per se)  | On reassignment                |
+| `langsmith-api-key`         | LangSmith UI                                        | Quarterly                      |
+| `langfuse-public-key`       | Langfuse UI (public, low-risk)                      | On project reset               |
+| `langfuse-secret-key`       | Langfuse UI                                         | Quarterly                      |
+| `cosmos-connection-string`  | `az cosmosdb keys list --type connection-strings`   | Primary ↔ secondary swap       |
+
+### First-time setup after deploy
+
+```bash
+# 1. Seed the schema with REPLACE-ME placeholders
+bash infra/scripts/seed-keyvault-secrets.sh kv-condomanager-dev
+
+# 2. Replace placeholders with real values, one at a time
+az keyvault secret set --vault-name kv-condomanager-dev \
+    --name azure-openai-key --value "<real-value>"
+# ... repeat for the other 7 secrets
+
+# 3. Smoke-test that the MI can actually read a secret
+pip install "azure-identity>=1.15.0" "azure-keyvault-secrets>=4.7.0"
+python infra/scripts/keyvault-smoke-test.py --vault kv-condomanager-dev
+```
+
+The smoke-test uses `DefaultAzureCredential`, so it works both locally
+(via `az login`) and from inside the Container App (via the attached
+User-Assigned MI). Either succeeds once the role assignment has
+propagated through Azure AD (usually under a minute).
+
+### Rotation policy
+
+- **Quarterly cadence** for app credentials (Twilio, LangSmith, Langfuse).
+  Calendar reminder is owned by `platform-team`.
+- **On-demand** for Azure OpenAI and Cosmos: rotate using the key1 → key2
+  swap pattern (update the KV secret to key2, regenerate key1, then
+  optionally swap back next rotation).
+- **Never delete** an old secret version — Key Vault keeps history, and
+  running Container App revisions may still reference older versions
+  until they're replaced.
+- **Always smoke-test after a rotation** with `keyvault-smoke-test.py`.
+
+### Why values aren't in IaC
+
+A Bicep `Microsoft.KeyVault/vaults/secrets` resource requires a
+`value` property. That value would then live in source, in deployment
+history, and in any exported ARM template — none acceptable. So Bicep
+declares the vault + the MI binding only; values come from out-of-band
+`az keyvault secret set` calls (manual today, possibly an Azure DevOps
+release pipeline later, but never from this repo).
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,
-following the CM-16 / CM-17 pattern: accept `env`, `location`, and `tags`
-params, emit any resource IDs downstream modules need as outputs, and
-let `main.bicep` chain them in dependency order.
-
-```bicep
-// example: keyvault.bicep (CM-18, illustrative)
-targetScope = 'resourceGroup'
-
-@allowed([ 'dev', 'prod' ])
-param env string
-param location string
-param tags object
-
-resource kv 'Microsoft.KeyVault/vaults@2024-04-01-preview' = {
-  name: 'kv-condomanager-${env}'
-  location: location
-  tags: tags
-  // ...
-}
-```
-
-Then wire it into `main.bicep`:
-
-```bicep
-module keyvault './modules/keyvault.bicep' = {
-  name: 'kv-${env}'
-  params: {
-    env: env
-    location: location
-    tags: tagsModule.outputs.tags
-  }
-}
-```
+following the CM-16 / CM-17 / CM-18 pattern: accept `env`, `location`,
+and `tags` params, emit any resource IDs downstream modules need as
+outputs, and let `main.bicep` chain them in dependency order.

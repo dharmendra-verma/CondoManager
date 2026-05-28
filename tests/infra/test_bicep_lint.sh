@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 (single-RG topology) + CM-16 (Container Apps modules) + CM-17 (Cosmos DB)
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -16,6 +16,11 @@
 #  13. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
 #      policies-vector, declares the four required containers, defaults
 #      enableFreeTier to true, and is wired into main.bicep
+#  14. (CM-18) keyvault.bicep uses RBAC mode + soft-delete + purge protection,
+#      grants the MI principalId `Key Vault Secrets User`, is wired into
+#      main.bicep; container-app.bicep accepts userAssignedIdentityId;
+#      compiled ARM includes KV + MI + roleAssignments resource types;
+#      seed-keyvault-secrets.sh secret list matches keyvault.bicep
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/infra-deploy.yml
@@ -60,7 +65,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -83,7 +88,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -261,6 +266,94 @@ if grep -Fq "modules/cosmos.bicep" "$BICEP_DIR/main.bicep"; then
   echo "   ✓ main.bicep references modules/cosmos.bicep"
 else
   echo "   ✗ main.bicep does NOT reference modules/cosmos.bicep"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-18 — Key Vault + User-Assigned Managed Identity
+# ---------------------------------------------------------------------------
+
+KV="$MODULES_DIR/keyvault.bicep"
+MI="$MODULES_DIR/managed-identity.bicep"
+CA="$MODULES_DIR/container-app.bicep"
+SEED_SH="$ROOT/infra/scripts/seed-keyvault-secrets.sh"
+
+echo "▶  Verifying keyvault.bicep enables RBAC authorization (AC #1)"
+if grep -Fq "enableRbacAuthorization: true" "$KV"; then
+  echo "   ✓ RBAC mode enabled"
+else
+  echo "   ✗ enableRbacAuthorization: true MISSING — Key Vault not in RBAC mode"
+  FAIL=1
+fi
+
+echo "▶  Verifying keyvault.bicep has soft-delete + purge protection"
+if grep -Fq "enableSoftDelete: true" "$KV" && grep -Fq "enablePurgeProtection: true" "$KV"; then
+  echo "   ✓ soft-delete + purge protection enabled"
+else
+  echo "   ✗ soft-delete or purge protection MISSING from keyvault.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying MI principalId is granted Key Vault Secrets User (role 4633458b-…)"
+if grep -Fq "4633458b-17de-408a-b874-0445c86b69e6" "$KV"; then
+  echo "   ✓ Key Vault Secrets User role GUID present"
+else
+  echo "   ✗ Key Vault Secrets User role GUID 4633458b-… MISSING — MI cannot read secrets"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep accepts userAssignedIdentityId param"
+if grep -Eq "param[[:space:]]+userAssignedIdentityId[[:space:]]+string" "$CA"; then
+  echo "   ✓ userAssignedIdentityId param present on container-app.bicep"
+else
+  echo "   ✗ userAssignedIdentityId param MISSING — Container App cannot attach the MI"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires managed-identity and keyvault modules"
+if grep -Fq "modules/managed-identity.bicep" "$BICEP_DIR/main.bicep" \
+   && grep -Fq "modules/keyvault.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ MI + KV modules wired into main.bicep"
+else
+  echo "   ✗ MI or KV module NOT referenced from main.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled main.json includes KV + MI + roleAssignments resource types"
+for type in "Microsoft.KeyVault/vaults" "Microsoft.ManagedIdentity/userAssignedIdentities" "Microsoft.Authorization/roleAssignments"; do
+  if grep -Fq "$type" /tmp/main.json; then
+    echo "   ✓ $type present in compiled ARM"
+  else
+    echo "   ✗ $type MISSING from compiled ARM"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying seed-keyvault-secrets.sh exists and is non-empty"
+if [ -s "$SEED_SH" ]; then
+  echo "   ✓ seed script present"
+else
+  echo "   ✗ infra/scripts/seed-keyvault-secrets.sh missing or empty"
+  FAIL=1
+fi
+
+echo "▶  Verifying secret-name list in keyvault.bicep matches seed-keyvault-secrets.sh"
+# Extract from keyvault.bicep: every single-quoted token inside the
+# `param secretNames array = [ ... ]` block.
+KV_SECRETS=$(awk "/param secretNames array = \\[/,/^\\]/" "$KV" \
+             | grep -oE "'[a-z][a-z0-9-]*'" | tr -d "'" | sort -u)
+# Extract from seed script: every bare token inside the `SECRETS=( ... )` block.
+SH_SECRETS=$(awk "/^SECRETS=\\(/,/^\\)/" "$SEED_SH" \
+             | grep -oE "^[[:space:]]+[a-z][a-z0-9-]+" | tr -d ' ' | sort -u)
+if [ -n "$KV_SECRETS" ] && [ "$KV_SECRETS" = "$SH_SECRETS" ]; then
+  COUNT=$(printf "%s\n" "$KV_SECRETS" | wc -l | tr -d ' ')
+  echo "   ✓ secret-name lists in sync ($COUNT names)"
+else
+  echo "   ✗ keyvault.bicep secretNames and seed-keyvault-secrets.sh SECRETS differ"
+  echo "     --- keyvault.bicep ---"
+  printf "%s\n" "$KV_SECRETS" | sed 's/^/       /'
+  echo "     --- seed-keyvault-secrets.sh ---"
+  printf "%s\n" "$SH_SECRETS" | sed 's/^/       /'
   FAIL=1
 fi
 

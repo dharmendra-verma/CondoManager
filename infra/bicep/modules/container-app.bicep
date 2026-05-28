@@ -1,15 +1,21 @@
 // container-app.bicep — Hello-world Container App (smoke-test surface).
-// Jira: CM-16  | Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
+// Jira: CM-16 (initial)  | CM-18 (User-Assigned MI attachment)
+// Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // Acts as the initial app shell so CM-16 has something to deploy. The image
 // is Microsoft's official Container Apps quickstart hello-world, pulled from
-// MCR (no ACR yet — that's CM-18). Scale 0-1 + 0.25 vCPU / 0.5 Gi keeps idle
-// cost at zero and stays well inside the 180K vCPU-sec/mo Consumption free
-// grant even if poked frequently.
+// MCR (no ACR yet). Scale 0-1 + 0.25 vCPU / 0.5 Gi keeps idle cost at zero
+// and stays well inside the 180K vCPU-sec/mo Consumption free grant even
+// if poked frequently.
 //
 // External ingress + targetPort 80 (the port mcr.microsoft.com/azuredocs/
 // containerapps-helloworld serves on). transport `auto` lets the platform
 // pick HTTP/1.1 vs HTTP/2 based on the client.
+//
+// CM-18: When `userAssignedIdentityId` is supplied, the app attaches that MI
+// and can read Key Vault secrets via DefaultAzureCredential. An empty string
+// (the default) keeps backward-compat for any caller that doesn't pass the
+// param — the `identity` block is omitted entirely in that case.
 
 targetScope = 'resourceGroup'
 
@@ -46,12 +52,24 @@ param minReplicas int = 0
 @minValue(1)
 param maxReplicas int = 1
 
+@description('Resource ID of a User-Assigned Managed Identity to attach. Empty string (default) omits the identity block entirely for backward-compat.')
+param userAssignedIdentityId string = ''
+
 var containerAppName = 'ca-hello-condomanager-${env}'
+var hasIdentity = !empty(userAssignedIdentityId)
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
   location: location
   tags: tags
+  // The platform rejects an empty userAssignedIdentities map, so we either
+  // emit a full UserAssigned identity block or omit `identity` entirely.
+  identity: hasIdentity ? {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${userAssignedIdentityId}': {}
+    }
+  } : null
   properties: {
     environmentId: environmentId
     configuration: {
