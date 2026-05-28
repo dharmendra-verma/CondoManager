@@ -1,6 +1,6 @@
 // main.bicep — entry point for resources deployed INTO rg-condomanager.
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
-//       CM-18 (Key Vault + User-Assigned MI)
+//       CM-18 (Key Vault + User-Assigned MI)  | CM-20 (ACR + base image)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -130,6 +130,19 @@ module cosmos './modules/cosmos.bicep' = {
   }
 }
 
+// Azure Container Registry (Basic SKU) — destination for the curated Python
+// base image built by .github/workflows/base-image.yml. (CM-20)
+// The hello-world Container App still pulls from MCR; ACR's first consumers
+// are the future agent-runtime stories that FROM acrcondomanager<env>.azurecr.io/base/python:3.12-slim-latest.
+module acr './modules/acr.bicep' = {
+  name: 'acr-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+  }
+}
+
 // Resource group identity outputs (kept from CM-15 for OIDC + scope smoke test).
 output resourceGroupId string = resourceGroup().id
 output resourceGroupName string = resourceGroup().name
@@ -155,3 +168,7 @@ output managedIdentityName string = managedIdentity.outputs.identityName
 output managedIdentityClientId string = managedIdentity.outputs.clientId
 output keyVaultName string = keyvault.outputs.vaultName
 output keyVaultUri string = keyvault.outputs.vaultUri
+
+// CM-20 outputs — used by .github/workflows/base-image.yml + future app stories.
+output acrName string = acr.outputs.acrName
+output acrLoginServer string = acr.outputs.loginServer
