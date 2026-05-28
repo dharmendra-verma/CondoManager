@@ -1,34 +1,38 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-20
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
 #   3. tags.bicep declares the full 5-tag schema for downstream resources
 #   4. tags.bicep restricts env to dev / prod / shared (no rogue env names)
 #   5. main.parameters.json exists, is valid JSON, and declares env
-#   6. workflow targets rg-condomanager via `az deployment group …`
-#   7. (CM-16) all module files in infra/bicep/modules/ compile and are RG-scoped
-#   8. (CM-16) per-env modules restrict env to dev / prod
-#   9. (CM-16) Container Apps env uses the Consumption workload profile
-#  10. (CM-16) VNet subnet is delegated to Microsoft.App/environments
-#  11. (CM-16) Container App defaults to minReplicas: 0 (free-tier guard)
-#  12. (CM-16) compiled ARM contains the Container Apps + VNet resource types
-#  13. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
+#   6. (CM-19) deploy.yml targets rg-condomanager via `az deployment group create`
+#       and has explicit deploy-dev + deploy-prod jobs gated by GitHub Environments
+#   7. (CM-19) build.yml runs `az deployment group what-if` against rg-condomanager
+#   8. (CM-19) no stale infra-deploy.yml workflow (split into build.yml + deploy.yml)
+#   9. (CM-19) no PAT-style secrets referenced in any workflow (OIDC only)
+#  10. (CM-16) all module files in infra/bicep/modules/ compile and are RG-scoped
+#  11. (CM-16) per-env modules restrict env to dev / prod
+#  12. (CM-16) Container Apps env uses the Consumption workload profile
+#  13. (CM-16) VNet subnet is delegated to Microsoft.App/environments
+#  14. (CM-16) Container App defaults to minReplicas: 0 (free-tier guard)
+#  15. (CM-16) compiled ARM contains the Container Apps + VNet resource types
+#  16. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
 #      policies-vector, declares the four required containers, defaults
 #      enableFreeTier to true, and is wired into main.bicep
-#  14. (CM-18) keyvault.bicep uses RBAC mode + soft-delete + purge protection,
+#  17. (CM-18) keyvault.bicep uses RBAC mode + soft-delete + purge protection,
 #      grants the MI principalId `Key Vault Secrets User`, is wired into
 #      main.bicep; container-app.bicep accepts userAssignedIdentityId;
 #      compiled ARM includes KV + MI + roleAssignments resource types;
 #      seed-keyvault-secrets.sh secret list matches keyvault.bicep
-#  15. (CM-20) acr.bicep defaults SKU=Basic + adminUserEnabled=false; uses
+#  18. (CM-20) acr.bicep defaults SKU=Basic + adminUserEnabled=false; uses
 #      hyphen-free name pattern; main.bicep wires it; compiled ARM contains
 #      Microsoft.ContainerRegistry/registries; base Dockerfile pins
 #      python:3.12-slim + runs apt upgrade; base-image.yml references
 #      Trivy + az acr login + docker push; acr-prune.sh exists.
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
-# Run in CI:    invoked by .github/workflows/infra-deploy.yml
+# Run in CI:    invoked by .github/workflows/build.yml (lint-infra job)
 
 set -euo pipefail
 
@@ -102,13 +106,73 @@ for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-ana
   fi
 done
 
-echo "▶  Verifying workflow targets rg-condomanager via 'az deployment group'"
-WF="$ROOT/.github/workflows/infra-deploy.yml"
-if grep -Fq "az deployment group" "$WF" && grep -Fq "rg-condomanager" "$WF"; then
-  echo "   ✓ workflow uses RG-scoped deployment commands"
-else
-  echo "   ✗ workflow does not target rg-condomanager via 'az deployment group'"
+echo "▶  Verifying deploy.yml targets rg-condomanager via 'az deployment group create'"
+DEPLOY_WF="$ROOT/.github/workflows/deploy.yml"
+BUILD_WF="$ROOT/.github/workflows/build.yml"
+if [ ! -f "$DEPLOY_WF" ]; then
+  echo "   ✗ .github/workflows/deploy.yml MISSING (CM-19 split)"
   FAIL=1
+elif grep -Fq "az deployment group create" "$DEPLOY_WF" && grep -Fq "rg-condomanager" "$DEPLOY_WF"; then
+  echo "   ✓ deploy.yml uses RG-scoped deployment commands"
+else
+  echo "   ✗ deploy.yml does not target rg-condomanager via 'az deployment group create'"
+  FAIL=1
+fi
+
+echo "▶  Verifying build.yml runs what-if against rg-condomanager"
+if [ ! -f "$BUILD_WF" ]; then
+  echo "   ✗ .github/workflows/build.yml MISSING (CM-19 split)"
+  FAIL=1
+elif grep -Fq "az deployment group what-if" "$BUILD_WF" && grep -Fq "rg-condomanager" "$BUILD_WF"; then
+  echo "   ✓ build.yml runs what-if against rg-condomanager"
+else
+  echo "   ✗ build.yml does not run what-if against rg-condomanager"
+  FAIL=1
+fi
+
+echo "▶  Verifying no stale infra-deploy.yml workflow"
+if [ -f "$ROOT/.github/workflows/infra-deploy.yml" ]; then
+  echo "   ✗ infra-deploy.yml still present (CM-19 split it into build.yml + deploy.yml)"
+  FAIL=1
+else
+  echo "   ✓ infra-deploy.yml removed"
+fi
+
+echo "▶  Verifying deploy.yml defines deploy-dev and deploy-prod jobs"
+if grep -Eq "^[[:space:]]+deploy-dev:" "$DEPLOY_WF" \
+   && grep -Eq "^[[:space:]]+deploy-prod:" "$DEPLOY_WF"; then
+  echo "   ✓ deploy-dev + deploy-prod jobs present"
+else
+  echo "   ✗ deploy.yml missing deploy-dev or deploy-prod job"
+  FAIL=1
+fi
+
+echo "▶  Verifying deploy.yml gates per-env deploys via GitHub Environments"
+if grep -Eq "environment:[[:space:]]+dev" "$DEPLOY_WF" \
+   && grep -Eq "environment:[[:space:]]+prod" "$DEPLOY_WF"; then
+  echo "   ✓ deploy-dev uses environment: dev, deploy-prod uses environment: prod"
+else
+  echo "   ✗ deploy.yml does not gate per-env deploys with GitHub Environments"
+  FAIL=1
+fi
+
+echo "▶  Verifying deploy.yml passes 'env=prod' for prod (no staging in CLAUDE.md topology)"
+if grep -Fq "env=prod" "$DEPLOY_WF" && ! grep -Fq "env=staging" "$DEPLOY_WF"; then
+  echo "   ✓ deploy.yml has env=prod, no env=staging"
+else
+  echo "   ✗ deploy.yml is missing env=prod or contains env=staging"
+  FAIL=1
+fi
+
+echo "▶  Verifying workflows reference OIDC only (no PAT-style secrets)"
+PAT_HITS=$(grep -rE "secrets\.[A-Z_]+_TOKEN" "$ROOT/.github/workflows" 2>/dev/null \
+            | grep -v "GITHUB_TOKEN" || true)
+if [ -n "$PAT_HITS" ]; then
+  echo "   ✗ Found PAT-like secret references in workflows:"
+  echo "$PAT_HITS"
+  FAIL=1
+else
+  echo "   ✓ no PAT-style secrets referenced in workflows"
 fi
 
 echo "▶  Verifying tags.bicep restricts env to dev/prod/shared"

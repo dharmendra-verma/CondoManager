@@ -11,7 +11,7 @@
 #     pick up upstream security patches; push + prune.
 #   * workflow_dispatch → manual rebuild.
 #
-# Required GitHub secrets (shared with infra-deploy.yml — see docs/INFRA.md):
+# Required GitHub secrets (shared with build.yml + deploy.yml — see docs/INFRA.md):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #
 # Pre-req (one-time, post-first-deploy, see docs/INFRA.md):
