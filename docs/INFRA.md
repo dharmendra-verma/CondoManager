@@ -56,23 +56,50 @@ infra/
     └── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
 .github/
 └── workflows/
-    └── infra-deploy.yml                      # CI: lint → what-if → deploy (single RG)
+    ├── build.yml                             # PR + push:main · per-area lint/what-if + summary comment (CM-19)
+    └── deploy.yml                            # push:main → deploy-dev, release:published → deploy-prod (CM-19)
 tests/
 └── infra/
     └── test_bicep_lint.sh                    # Lint test runs in CI on every PR
 ```
 
-## How CI works
+## How CI/CD works (CM-19)
 
-1. **PR opened touching `infra/`** → `lint` + `what-if` (no apply).
-2. **Push to `main` touching `infra/`** → `lint` + `deploy-rg`. The `deploy-rg`
-   job is gated by the `prod` GitHub Environment (manual approval) because
-   the shared RG is a production resource.
-3. All deployments use **OIDC federated credentials** (no long-lived secrets).
+Two workflows of single responsibility each. Detailed operator guide is in [`docs/CICD.md`](CICD.md).
 
-When per-env resource stories (Cosmos DB, Key Vault, ACR, Container Apps env)
-land, their workflows will add `deploy-dev` and `deploy-prod` jobs gated by
-the `dev` and `prod` GitHub Environments respectively.
+| Event                                     | Workflow       | Job                       | Environment | Approval     |
+|-------------------------------------------|----------------|---------------------------|-------------|--------------|
+| `pull_request` (any path)                 | `build.yml`    | `detect` → `lint-infra` → `what-if-infra` → `summary` | _none_ | _none_ |
+| `push:main` (touches `infra/`)            | `build.yml`    | `detect` → `lint-infra`   | _none_      | _none_       |
+| `push:main` (touches `infra/`)            | `deploy.yml`   | `deploy-dev`              | `dev`       | none         |
+| `release:published`                       | `deploy.yml`   | `deploy-prod`             | `prod`      | manual       |
+| `workflow_dispatch (target_env=dev)`      | `deploy.yml`   | `deploy-dev`              | `dev`       | none         |
+| `workflow_dispatch (target_env=prod)`     | `deploy.yml`   | `deploy-prod`             | `prod`      | manual       |
+
+All Azure auth uses **OIDC federated credentials** — no long-lived secrets, no PATs.
+The PR summary comment uses the built-in `GITHUB_TOKEN`. `marocchino/sticky-pull-request-comment@v2`
+posts a single comment that updates in-place across PR pushes (header `ci-summary`).
+
+### Why no staging?
+
+The Jira AC for CM-19 mentioned a `tag → staging` deploy, but the project has only
+**dev and prod** ([`CLAUDE.md §3`](../CLAUDE.md)). The mapping above implements the
+spirit of the AC within the agreed topology: `push:main → dev`, `release:published → prod`.
+The `workflow_dispatch` input is the escape hatch for any out-of-band re-deploy.
+
+### Cutting a prod release
+
+```bash
+# 1. Tag the commit you want to ship
+git tag -a v0.1.0 -m "Foundation phase: Container Apps + Cosmos + Key Vault wired"
+
+# 2. Push the tag, then publish a release (this fires deploy.yml → deploy-prod)
+git push origin v0.1.0
+gh release create v0.1.0 --notes-from-tag
+```
+
+After publish, `deploy-prod` enters the `prod` environment and waits for an approver
+before running `az deployment group create --parameters env=prod` against `rg-condomanager`.
 
 ## One-time setup (manual, by repo owner)
 
