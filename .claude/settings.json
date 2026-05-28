@@ -61,7 +61,16 @@
       "Bash(./infra/scripts/**)",
 
       "WebFetch",
-      "WebSearch"
+      "WebSearch",
+	  
+	  "Read(C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+      "Write(C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+      "Edit(C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+
+      "Bash(ls:C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+      "Bash(cat:C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+      "Bash(mv:C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)",
+      "Bash(cp:C:/Users/to_dh/OneDrive/Working/Condo Manager/Planning/**)"
     ],
     "deny": [
       "Bash(rm -rf /:*)",
