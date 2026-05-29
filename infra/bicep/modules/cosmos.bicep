@@ -283,6 +283,32 @@ resource knowledgeSyncContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDataba
   }
 }
 
+// CM-36: weekly Analytics digests. One doc per (tenant, week) — recurring
+// issues, contractor scores, sentiment trend, predictive flags — read by the
+// CM-37 tenant portal. Partitioned by /tenantId; small docs on shared
+// throughput. 90-day TTL: digests are a rolling, rebuildable view (re-running
+// the job regenerates them), so old weeks auto-purge.
+resource digestsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'digests'
+  properties: {
+    resource: {
+      id: 'digests'
+      partitionKey: {
+        paths: [ '/tenantId' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+      // 90 days = 7,776,000 seconds. Rolling view; old weeks auto-purge.
+      defaultTtl: 7776000
+    }
+  }
+}
+
 output accountName string = account.name
 output accountId string = account.id
 output endpoint string = account.properties.documentEndpoint
