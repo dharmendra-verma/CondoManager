@@ -57,6 +57,7 @@ SECRETS=(
   cosmos-connection-string
   app-insights-connection-string
   slack-webhook-url
+  google-drive-sa-key
 )
 
 PLACEHOLDER="REPLACE-ME"

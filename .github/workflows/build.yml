@@ -49,8 +49,10 @@ jobs:
               - '.github/workflows/deploy.yml'
             python:
               - 'agents/**'
+              - 'functions/**'
               - 'tests/observability/**'
               - 'tests/orchestrator/**'
+              - 'tests/knowledge/**'
               - 'tests/__init__.py'
               - 'pyproject.toml'
               - 'requirements-lock.txt'
