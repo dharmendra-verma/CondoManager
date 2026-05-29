@@ -24,6 +24,10 @@ STATE_CONTAINER = "knowledge_sync"
 #: CM-18 Key Vault seed placeholder — treated as if-unset everywhere.
 SECRET_PLACEHOLDER = "REPLACE-ME"
 
+#: CM-33: knowledge-agent confidence floor. An answer scoring below this is
+#: refused and the request is handed off to the Maintenance agent (AC).
+CONFIDENCE_THRESHOLD = 0.6
+
 #: Per-document outcome of one sync pass.
 DocStatus = Literal["indexed", "skipped", "removed", "failed"]
 
@@ -123,3 +127,42 @@ class SyncReport(BaseModel):
     failed: int = 0
     chunks_written: int = 0
     results: list[DocSyncResult] = Field(default_factory=list)
+
+
+# --- CM-33: Knowledge Agent (RAG read side) ----------------------------------
+
+
+class RetrievedChunk(BaseModel):
+    """A chunk returned by hybrid retrieval, with ranking metadata.
+
+    ``score`` is the fused Reciprocal-Rank-Fusion score (higher = better
+    rank across the vector + keyword lists). ``similarity`` is the vector
+    cosine similarity (``1 - VectorDistance``, clamped to [0, 1]) of the
+    chunk to the query — it drives the answer confidence.
+    """
+
+    chunk: VectorChunk
+    score: float
+    similarity: float
+
+
+class Citation(BaseModel):
+    """An inline ``[index]`` citation pointing at a retrieved source chunk."""
+
+    index: int
+    doc_id: str
+    doc_title: str
+
+
+class KnowledgeAnswer(BaseModel):
+    """The Knowledge Agent's grounded answer (or a refusal).
+
+    ``refused=True`` means confidence fell below
+    :data:`CONFIDENCE_THRESHOLD` (or the model couldn't answer from the
+    retrieved context) — the node hands off to Maintenance in that case.
+    """
+
+    answer: str
+    citations: list[Citation] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+    refused: bool = False

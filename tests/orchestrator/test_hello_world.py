@@ -12,7 +12,13 @@ def test_hello_world_runs_to_completion(
     memory_checkpointer: MemorySaver,
     in_memory_spans: InMemorySpanExporter,
 ) -> None:
-    """Triage -> knowledge -> END with no LLM calls and no errors."""
+    """Triage -> knowledge (refuses: no KB) -> maintenance -> END, no creds.
+
+    CM-33: with no ``COSMOS_ENDPOINT`` configured the Knowledge node cannot
+    retrieve, so it refuses and hands off to Maintenance — all credential-free
+    and with no LLM/network calls. The terminal output is the Maintenance
+    stub's, confirming the handoff edge fired.
+    """
     graph = build_graph(checkpointer=memory_checkpointer)
     initial = AgentState(
         tenant_id="t-hello",
@@ -25,8 +31,8 @@ def test_hello_world_runs_to_completion(
     with with_request_id("r-hello"):
         final = graph.invoke(initial, config=config)
 
-    # Knowledge stub stamps a status string in output.
-    assert final["output"]["status"] == "answered_stub"
+    # Knowledge refused (no KB) and handed off; Maintenance stub is terminal.
+    assert final["output"]["status"] == "ticket_stub"
 
 
 def test_hello_world_emits_expected_node_spans(

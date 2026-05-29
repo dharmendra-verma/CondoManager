@@ -7,10 +7,13 @@ Topology::
     START
       |
       v
-    triage  -- (router on state.routes[-1]) -->  knowledge       --> END
+    triage  -- (router on state.routes[-1]) -->  knowledge -> END | maintenance
                                                  maintenance     --> END
                                                  escalation -> hitl_review -> END
                                                  guardrail_terminated      --> END
+
+CM-33: the Knowledge node answers terminally, but on refusal (low
+confidence) it routes to Maintenance via ``_knowledge_router``.
 
 The router reads ``state.routes[-1]`` to pick the next node. Each stub
 node appends its target route name (e.g. ``"knowledge"``) to
@@ -45,6 +48,18 @@ def _router(state: AgentState) -> str:
     if not state.routes:
         return "triage"
     return state.routes[-1]
+
+
+def _knowledge_router(state: AgentState) -> str:
+    """Post-Knowledge edge — hand off to Maintenance on refusal, else END.
+
+    CM-33's Knowledge node appends ``"maintenance"`` to ``state.routes`` when
+    it refuses (confidence below threshold / nothing retrieved); otherwise the
+    answer is terminal.
+    """
+    if state.routes and state.routes[-1] == "maintenance":
+        return "maintenance"
+    return END
 
 
 def build_graph(
@@ -91,9 +106,16 @@ def build_graph(
         },
     )
 
-    # Downstream nodes — knowledge + maintenance are terminal in the
-    # hello-world shape. Escalation routes through HITL.
-    g.add_edge("knowledge", END)
+    # Downstream nodes. Knowledge is terminal when it answers, but routes to
+    # Maintenance when it refuses (CM-33 handoff) — hence a conditional edge.
+    g.add_conditional_edges(
+        "knowledge",
+        _knowledge_router,
+        {
+            "maintenance": "maintenance",
+            END: END,
+        },
+    )
     g.add_edge("maintenance", END)
     g.add_edge("escalation", "hitl_review")
     g.add_edge("hitl_review", END)
