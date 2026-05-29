@@ -445,15 +445,176 @@ stabilising and will gradually replace these. The KQL `coalesce(...)`
 keeps the workbook working through that transition — neither side
 needs to ship before the other.
 
+## Alerts (CM-26)
+
+One shared Action Group (`ag-condomanager-<env>`) fanned out to four
+alerts: a `Microsoft.Consumption/budgets` resource with 50/80/100%
+thresholds, and three `Microsoft.Insights/scheduledQueryRules` over
+the CM-22 App Insights component. Same KQL family as the CM-25
+workbook — alerts are "send a page when the workbook would turn red".
+
+### Alerts at a glance
+
+| Alert | Severity | Frequency | Window | Threshold | Source |
+|---|---|---|---|---|---|
+| `budget-condomanager-<env>` | (Azure Cost Mgmt) | continuous | monthly | 50/80/100% of `alertMonthlyBudgetUsd` | RG-scoped Consumption Budget |
+| `alert-latency-slo-<env>` | 2 (BH page) | every 5m | 5m | p95 > 2000ms | `requests` percentile() |
+| `alert-guardrail-trip-<env>` | **1** (page now) | every 5m | 5m | any `guardrail.*` event | `customEvents` |
+| `alert-hallucination-spike-<env>` | 2 (BH page) | every 15m | 1h | refusal_pct < 1% AND total > N | `dependencies` × `customEvents` |
+
+Pre-CM-28 the three query-based alerts evaluate to zero rows and don't
+fire — same posture as the CM-25 workbook panels. The budget alerts
+might fire if RG spend reaches a threshold, but phase 0 spend is
+near-zero too.
+
+### Action Group — Slack + email
+
+`ag-condomanager-<env>` (Microsoft.Insights/actionGroups, global). Two
+optional receivers:
+
+| Receiver | Param | When omitted | Notes |
+|---|---|---|---|
+| Email | `alertEmail` | Email receiver list is empty | Plain string — email is not a credential |
+| Slack webhook | `alertSlackWebhookUrl` (`@secure()`) | Webhook receiver list is empty | URL is the auth token; never commit to `main.parameters.json` |
+
+`useCommonAlertSchema: true` is set on both receivers so the JSON
+shape Azure sends is consistent across all alert types — operators
+write one Slack message formatter and reuse it.
+
+### Operator one-time setup (post-deploy)
+
+```bash
+# Option A — supply via --parameters on deploy (preferred):
+az deployment group create \
+  --resource-group rg-condomanager \
+  --template-file infra/bicep/main.bicep \
+  --parameters infra/bicep/main.parameters.json \
+  --parameters env=dev \
+              alertSlackWebhookUrl='https://hooks.slack.com/services/T.../B.../X...' \
+              alertEmail='ops@example.com'
+
+# Option B — post-deploy via the Azure Portal:
+# Monitor → Alerts → Action Groups → ag-condomanager-dev → Notifications → add
+```
+
+**Antipattern:** putting `alertSlackWebhookUrl` into
+`infra/bicep/main.parameters.json`. Even though Azure encrypts secure
+params in deployment history, the file is in git. Use `--parameters`
+or the Portal.
+
+### Canonical KQL — the three scheduled-query rules
+
+#### Latency SLO (severity 2)
+
+```kql
+requests
+| where timestamp > ago(5m)
+| summarize p95_ms = percentile(duration, 95)
+| where p95_ms > 2000
+```
+
+Single-window p95 > 2000ms over 5m, evaluated every 5m. Phase 0
+simplification — the formal multi-window burn-rate alert (Google SRE
+classic: 1h × 14.4 burn AND 5min × 14.4 burn) needs a defined error
+budget that doesn't exist yet. **Upgrade path:** when an SRE-style
+error budget lands, replace this single rule with two rules per the
+multi-window pattern.
+
+#### Guardrail trip (severity 1 — page now)
+
+```kql
+customEvents
+| where timestamp > ago(5m)
+| where name in ('guardrail.cost_cap', 'guardrail.loop_cap')
+| summarize trip_count = count() by name
+| where trip_count > 0
+```
+
+#### Hallucination spike (severity 2)
+
+```kql
+let win = 1h;
+let llm = dependencies
+  | where timestamp > ago(win)
+  | where customDimensions['openinference.span.kind'] == 'LLM'
+     or customDimensions['gen_ai.system'] == 'openai';
+let refusals = customEvents
+  | where timestamp > ago(win)
+  | where name == 'llm.refused';
+let total = toscalar(llm | count);
+let refused = toscalar(refusals | count);
+print
+  total = total,
+  refused = refused,
+  refusal_pct = iff(total == 0, 100.0, todouble(refused) / total * 100)
+| where total > <hallucinationSpikeMinCalls> and refusal_pct < 1.0
+```
+
+`<hallucinationSpikeMinCalls>` is a Bicep param (default 10) — raise
+it once steady-state prod LLM traffic is known. The `iff(total == 0,
+100.0, …)` clause inside the KQL is a belt-and-suspenders defense
+against the `param=0` edge case.
+
+### CustomEvents contracts
+
+#### Guardrail events (CM-28 stop-rules will emit)
+
+```python
+from opentelemetry import trace
+tracer = trace.get_tracer(__name__)
+
+# When the per-request cost cap is hit:
+with tracer.start_as_current_span("guardrail.cost_cap") as span:
+    span.set_attribute("guardrail.budget_usd", budget_usd)
+    span.set_attribute("guardrail.spent_usd", spent_usd)
+    span.set_attribute("hitl.task_id", task_id)  # if applicable
+
+# When the per-request loop cap is hit:
+with tracer.start_as_current_span("guardrail.loop_cap") as span:
+    span.set_attribute("guardrail.max_loops", max_loops)
+    span.set_attribute("guardrail.loop_count", loop_count)
+```
+
+#### Refusal events (CM-30 Triage will emit)
+
+```python
+# When the model declines (content filter, "I don't know" path, etc.):
+with tracer.start_as_current_span("llm.refused") as span:
+    span.set_attribute("llm.refusal_reason", reason)
+    span.set_attribute("gen_ai.request.model", model)
+```
+
+Both contracts use OTel `tracer.start_as_current_span(...)` which lands
+in App Insights as a row in `customEvents`. The literal event names
+(`guardrail.cost_cap`, `guardrail.loop_cap`, `llm.refused`) are the
+ones the alert rules query for — stay on those names so the alerts
+fire automatically when the producer story ships.
+
+### Why RG-scoped budget pre-OpenAI
+
+The AC mentions "monthly Azure OpenAI spend" but no
+`Microsoft.CognitiveServices/accounts` (Azure OpenAI) resource exists
+in the project yet. RG-scoped budget catches every paid resource in
+`rg-condomanager`; in phase 0 that's tiny container-app runtime + a
+trickle of Log Analytics ingestion. When CM-OpenAI lands, OpenAI
+tokens dominate the bill anyway — operator can tighten the filter to
+`category: 'ResourceGroupName' + ResourceType` in a follow-up. No
+work is wasted.
+
+### Cost of running the alerts themselves
+
+Three scheduled-query rules × max ~12 evaluations/hour × small KQL
+windows = well under $1/month in phase 0 (Azure Monitor logs query
+charges, not row counts at this volume). Documented for the cost-paranoid
+operator; the budget alert above catches surprises.
+
 ## What comes next (forward references)
 
-* **CM-26** reuses these KQL queries as Azure Monitor alert rules
-  (`Microsoft.Insights/scheduledQueryRules`) for cost-budget, latency
-  SLO, and guardrail-trip alerting. Same queries, different surface.
 * **CM-27** adds structured JSON logging that reads `get_request_id()` so
   log lines join spans by `request_id` in the App Insights query language.
-* **CM-28** is the first consumer of `langgraph_node_span` — the per-agent
-  error panel lights up the moment CM-28 lands.
+* **CM-28** is the first consumer of `langgraph_node_span` AND the first
+  emitter of `guardrail.cost_cap` / `guardrail.loop_cap` — the latency
+  panel + guardrail-trip alert both light up once CM-28 ships traffic.
 * **CM-30** extends `tests/eval/triage_seed.jsonl` to 200 examples and
-  runs the Triage Agent eval against the LangSmith dataset seeded
-  in CM-23.
+  emits `llm.refused` from the refusal path — the hallucination-spike
+  alert depends on this.
