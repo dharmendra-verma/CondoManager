@@ -284,13 +284,176 @@ CM-30 expands this to 200. The on-disk fixture is the source of truth:
 python infra/scripts/seed-langsmith-dataset.py --env dev
 ```
 
+## Operations workbook (CM-25)
+
+Azure Workbook `CondoManager Ops — <env>` lives under
+**Azure Portal → `appi-condomanager-<env>` → Workbooks → My workbooks**.
+Backed by the CM-22 App Insights component (workspace-based, queries land
+in the CM-16 Log Analytics workspace under the hood). Provisioned by
+`infra/bicep/modules/workbook.bicep`; the serialized payload (5 sections:
+header + time-range parameter + 4 KQL panels) is hand-written and lives
+beside the Bicep at `workbook-payload.json`.
+
+**Most panels will be empty until CM-28 (LangGraph spine) and CM-30
+(Triage Agent) ship live LLM traffic.** The workbook is built now to
+lock the OTel attribute schema and the `hitl.queued` / `hitl.resolved`
+custom-events contract; future stories drop spans into these panels
+without changing the workbook.
+
+### Panels
+
+| Panel | What it shows | Source rows / events |
+|---|---|---|
+| **Cost per day (USD)** | Daily LLM spend modeled from token counts × model-rate table | `dependencies` where `gen_ai.system == 'openai'` or `openinference.span.kind == 'LLM'` |
+| **Latency p50 / p95 / p99** | Per-operation latency percentiles, 5-minute buckets | `requests` (FastAPI handlers — CM-21 OTel auto-instrumentation) |
+| **Error rate per LangGraph node** | Per-node error percentage, hourly | `dependencies` where `customDimensions['langgraph.node']` is set |
+| **HITL queue depth** | Cumulative `hitl.queued` − `hitl.resolved`, 5-minute buckets | `customEvents` named `hitl.queued` / `hitl.resolved` (contract — see below) |
+
+### KQL queries — canonical source
+
+The queries in `infra/bicep/modules/workbook-payload.json` are the **deployed**
+source of truth; the same KQL is mirrored here so reviewers don't have to
+unpack the JSON.
+
+#### Cost per day
+
+```kql
+// Coalesces openinference and OTel gen_ai semantic conventions for token
+// + model. Pricing table — update when adopting a new model.
+let model_rates = datatable(model: string, prompt_per_token: real, completion_per_token: real) [
+    'gpt-4o-mini',  0.00000015, 0.00000060,
+    'gpt-4o',       0.00000250, 0.00001000,
+    'gpt-4-turbo',  0.00001000, 0.00003000
+];
+dependencies
+| where customDimensions['gen_ai.system'] == 'openai'
+    or customDimensions['openinference.span.kind'] == 'LLM'
+| extend
+    model = coalesce(
+        tostring(customDimensions['gen_ai.request.model']),
+        tostring(customDimensions['llm.model_name'])
+    ),
+    prompt_tokens = toint(coalesce(
+        customDimensions['gen_ai.usage.prompt_tokens'],
+        customDimensions['llm.token_count.prompt']
+    )),
+    completion_tokens = toint(coalesce(
+        customDimensions['gen_ai.usage.completion_tokens'],
+        customDimensions['llm.token_count.completion']
+    ))
+| join kind=leftouter (model_rates) on model
+| extend cost_usd =
+    (prompt_tokens * coalesce(prompt_per_token, 0.0))
+    + (completion_tokens * coalesce(completion_per_token, 0.0))
+| summarize daily_cost_usd = sum(cost_usd) by bin(timestamp, 1d)
+| order by timestamp asc
+```
+
+#### Latency p50 / p95 / p99
+
+```kql
+requests
+| where success in (true, false)
+| summarize
+    p50_ms = percentile(duration, 50),
+    p95_ms = percentile(duration, 95),
+    p99_ms = percentile(duration, 99)
+  by bin(timestamp, 5m), operation_Name
+| order by timestamp desc
+```
+
+#### Error rate per LangGraph node
+
+```kql
+dependencies
+| where isnotempty(tostring(customDimensions['langgraph.node']))
+| extend agent = tostring(customDimensions['langgraph.node'])
+| summarize
+    total = count(),
+    errors = countif(success == false)
+  by bin(timestamp, 1h), agent
+| extend error_rate_pct = todouble(errors) / total * 100.0
+| project timestamp, agent, error_rate_pct
+| order by timestamp desc
+```
+
+#### HITL queue depth
+
+```kql
+customEvents
+| where name in ('hitl.queued', 'hitl.resolved')
+| summarize
+    queued = countif(name == 'hitl.queued'),
+    resolved = countif(name == 'hitl.resolved')
+  by bin(timestamp, 5m)
+| order by timestamp asc
+| extend running_queued = row_cumsum(queued)
+| extend running_resolved = row_cumsum(resolved)
+| extend queue_depth = running_queued - running_resolved
+| project timestamp, queue_depth
+```
+
+### HITL events contract
+
+The HITL queue panel reads `customEvents`. The future HITL story emits:
+
+```python
+from opentelemetry import trace
+tracer = trace.get_tracer(__name__)
+
+# When a task is pushed to a human reviewer:
+with tracer.start_as_current_span("hitl.queued") as span:
+    span.set_attribute("hitl.task_id", task_id)
+    span.set_attribute("hitl.reason", reason)
+
+# When the reviewer signs off:
+with tracer.start_as_current_span("hitl.resolved") as span:
+    span.set_attribute("hitl.task_id", task_id)
+    span.set_attribute("hitl.outcome", outcome)
+```
+
+Stick to those literal event names so the workbook displays without changes.
+
+### One-time pin to dashboard (operator step — AC #3)
+
+Programmatic dashboard pinning is intentionally out of scope:
+`Microsoft.Portal/dashboards` would pre-empt each operator's per-user
+dashboard customization and the dashboard JSON breaks when Azure renames
+the workbook part. The pin step is operator-driven:
+
+1. Open the workbook in the Azure Portal (App Insights → Workbooks → "CondoManager Ops — dev").
+2. Click **Edit**, then **Done editing** to enter the workbook view.
+3. From the workbook header click **Pin** → **Pin all** (or select specific panels).
+4. Pick the dashboard. Create a new one named `condomanager-ops-<env>` the first time.
+
+### Why model-rate KQL, not Azure Cost Management?
+
+* Cost Management's REST API surfaces *billed* spend with hours of latency
+  and doesn't attribute per-request / per-agent. The workbook needs
+  per-span granularity so the latency / errors / cost panels share the
+  same span universe.
+* The model-rate `datatable` is a 10-line block that updates rarely.
+  Real-billing reconciliation lands in CM-26 (budget alerts) — that
+  story can layer Cost Management on top of the same span scope.
+
+### Why coalesce openinference + OTel `gen_ai.*`?
+
+CM-21's `openinference-instrumentation-openai` emits
+`llm.token_count.prompt` / `llm.token_count.completion` /
+`llm.model_name`. The OTel semantic conventions for `gen_ai.*` are
+stabilising and will gradually replace these. The KQL `coalesce(...)`
+keeps the workbook working through that transition — neither side
+needs to ship before the other.
+
 ## What comes next (forward references)
 
-* **CM-24** ships Langfuse Cloud Hobby for production LLM observations.
-* **CM-25** builds Log Analytics workbooks over the spans flowing into
-  App Insights from this story.
+* **CM-26** reuses these KQL queries as Azure Monitor alert rules
+  (`Microsoft.Insights/scheduledQueryRules`) for cost-budget, latency
+  SLO, and guardrail-trip alerting. Same queries, different surface.
 * **CM-27** adds structured JSON logging that reads `get_request_id()` so
   log lines join spans by `request_id` in the App Insights query language.
-* **CM-28** is the first consumer of `langgraph_node_span`.
+* **CM-28** is the first consumer of `langgraph_node_span` — the per-agent
+  error panel lights up the moment CM-28 lands.
 * **CM-30** extends `tests/eval/triage_seed.jsonl` to 200 examples and
-  runs the Triage Agent eval against the LangSmith dataset seeded here.
+  runs the Triage Agent eval against the LangSmith dataset seeded
+  in CM-23.

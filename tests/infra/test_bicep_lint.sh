@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23 + CM-25
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -39,6 +39,11 @@
 #      + langsmithEndpoint; declares all four LANGCHAIN_* env-var names;
 #      main.bicep wires langsmithEnabled (default dev-only) + the
 #      condomanager-<env> project name; seed-langsmith-dataset.py exists.
+#  21. (CM-25) workbook.bicep wires Microsoft.Insights/workbooks with
+#      sourceId = App Insights component ID; main.bicep wires the module;
+#      workbook-payload.json parses cleanly and contains all four AC
+#      panel keywords (cost/latency/error/hitl) + the gen_ai.* namespace
+#      (regression for the openinference/gen_ai semconv coalesce).
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/build.yml (lint-infra job)
@@ -95,7 +100,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -118,7 +123,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -717,6 +722,86 @@ if [ -s "$LS_FIXTURE" ]; then
   fi
 else
   echo "   ✗ tests/eval/triage_seed.jsonl missing"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-25 — Operations workbook over App Insights
+# ---------------------------------------------------------------------------
+
+WB_BICEP="$MODULES_DIR/workbook.bicep"
+WB_JSON="$MODULES_DIR/workbook-payload.json"
+
+echo "▶  Verifying main.bicep wires the workbook module"
+if grep -Fq "modules/workbook.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ workbook module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/workbook.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires sourceId = App Insights component ID (regression)"
+# Wrong sourceId means workbook queries fail at runtime against the wrong scope.
+# Asserts the literal Bicep wiring, not just any non-empty appInsightsId.
+if grep -Fq "appInsightsId: appInsights.outputs.appInsightsId" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ workbook sourceId wired to appInsights.outputs.appInsightsId"
+else
+  echo "   ✗ main.bicep does NOT pass appInsights.outputs.appInsightsId to workbook — queries will fail at runtime"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains Microsoft.Insights/workbooks"
+if grep -Fq "Microsoft.Insights/workbooks" /tmp/main.json; then
+  echo "   ✓ Microsoft.Insights/workbooks present in compiled ARM"
+else
+  echo "   ✗ Microsoft.Insights/workbooks MISSING from compiled ARM"
+  FAIL=1
+fi
+
+echo "▶  Verifying workbook-payload.json parses cleanly"
+if [ -s "$WB_JSON" ]; then
+  if "$PY" -m json.tool "$WB_JSON" >/dev/null 2>&1; then
+    echo "   ✓ workbook-payload.json is valid JSON"
+  else
+    echo "   ✗ workbook-payload.json is INVALID JSON"
+    FAIL=1
+  fi
+else
+  echo "   ✗ infra/bicep/modules/workbook-payload.json missing"
+  FAIL=1
+fi
+
+echo "▶  Verifying workbook payload contains the four AC panel name slugs"
+# Each panel carries an explicit `"name": "<slug>"` field — checking those
+# slugs (rather than free-text keywords) is unambiguous AND avoids the
+# Git Bash GNU grep 3.0 SIGABRT on `-i` + multi-byte UTF-8 (em-dash in
+# the title strings tripped it).
+PANEL_SLUGS=("cost-per-day" "latency-percentiles" "error-rate-per-agent" "hitl-queue-depth")
+for slug in "${PANEL_SLUGS[@]}"; do
+  if grep -Fq "$slug" "$WB_JSON"; then
+    echo "   ✓ panel '$slug' present"
+  else
+    echo "   ✗ panel '$slug' MISSING from workbook-payload.json"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying workbook payload uses OTel gen_ai.* semantic conventions (regression)"
+# Guards the openinference + gen_ai coalesce in the cost KQL. If someone
+# strips the gen_ai branch (e.g. "openinference is enough"), this fires —
+# the OTel SDK is the future, openinference may drop the LLM kind.
+if grep -Fq "gen_ai." "$WB_JSON"; then
+  echo "   ✓ gen_ai.* attribute family present in payload"
+else
+  echo "   ✗ gen_ai.* attribute family MISSING — workbook will break when OTel gen_ai semconv lands"
+  FAIL=1
+fi
+
+echo "▶  Verifying workbook.bicep uses a deterministic guid() name (idempotent redeploys)"
+if grep -Eq "guid\\(resourceGroup\\(\\)\\.id," "$WB_BICEP"; then
+  echo "   ✓ workbook name is guid()-derived (redeploy-safe)"
+else
+  echo "   ✗ workbook.bicep does NOT use guid() for the resource name — redeploys may produce duplicates or fail"
   FAIL=1
 fi
 

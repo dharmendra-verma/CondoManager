@@ -51,7 +51,9 @@ infra/
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
-│       └── app-insights.bicep                # Workspace-based App Insights, OTLP backend (CM-22)
+│       ├── app-insights.bicep                # Workspace-based App Insights, OTLP backend (CM-22)
+│       ├── workbook.bicep                    # Operations workbook over App Insights — cost/latency/errors/HITL (CM-25)
+│       └── workbook-payload.json             # Serialized workbook payload (4 KQL panels + time-range parameter) (CM-25)
 ├── docker/
 │   └── base/Dockerfile                       # Curated python:3.12-slim base image (CM-20)
 └── scripts/

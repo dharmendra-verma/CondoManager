@@ -2,6 +2,7 @@
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
 //       CM-18 (Key Vault + User-Assigned MI)  | CM-20 (ACR + base image)
 //       CM-22 (Application Insights as OTLP backend)  | CM-23 (LangSmith tracing)
+//       CM-25 (Operations workbook over App Insights)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -91,6 +92,19 @@ module appInsights './modules/app-insights.bicep' = {
     tags: tagsModule.outputs.tags
     logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
     samplingPercentage: appInsightsSamplingPercentage
+  }
+}
+
+// Operations workbook over App Insights — 4 panels (cost / latency /
+// errors / HITL queue depth). Built now to lock the OTel attribute
+// schema; panels render empty until CM-28+ ships agent traffic. (CM-25)
+module workbook './modules/workbook.bicep' = {
+  name: 'wb-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    appInsightsId: appInsights.outputs.appInsightsId
   }
 }
 
@@ -230,6 +244,11 @@ output appInsightsName string = appInsights.outputs.appInsightsName
 output appInsightsId string = appInsights.outputs.appInsightsId
 @secure()
 output appInsightsConnectionString string = appInsights.outputs.connectionString
+
+// CM-25 outputs — workbook resource ID surfaces for operator pin-to-dashboard
+// + tooling discovery (the deep-link to the workbook builds from the ID).
+output workbookId string = workbook.outputs.workbookId
+output workbookName string = workbook.outputs.workbookName
 
 // CM-23 outputs — empty string when LangSmith is disabled, lets tooling
 // (e.g. seed-langsmith-dataset.py) discover the project name without
