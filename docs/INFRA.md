@@ -447,6 +447,74 @@ bash infra/scripts/acr-prune.sh acrcondomanagerdev base/python 5
 ```
 Idempotent; second run does zero deletes if the repo is already at <= N tagged.
 
+## LLM trace observability — Langfuse Cloud (CM-24)
+
+Production-only LLM observability via [Langfuse Cloud Hobby](https://cloud.langfuse.com)
+(free tier — 50K observations/month). Coexists with App Insights (CM-22):
+App Insights is engineering observability (HTTP / DB / queue spans);
+Langfuse is the LLM-specific overlay (cost per call, token counts, latency
+distributions per LangGraph node, hallucination signals).
+
+| Aspect            | Value                                                            |
+|-------------------|------------------------------------------------------------------|
+| Backend           | Langfuse Cloud Hobby, region: EU                                 |
+| Tier              | Hobby (free, 50K observations/mo)                                |
+| SDK               | `langfuse>=2.40,<3` (Python)                                     |
+| Primary surface   | `@observe_node` decorator (see `agents/observability/langfuse_export.py`) |
+| Trigger           | both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` set (non-`REPLACE-ME`) |
+| Killswitch        | `LANGFUSE_ENABLED=false` forces off even with keys set           |
+
+### Env-var contract
+
+| Env var                 | Source                                       | Default                          |
+|-------------------------|----------------------------------------------|----------------------------------|
+| `LANGFUSE_PUBLIC_KEY`   | KV secret `langfuse-public-key` via CM-26    | unset → Langfuse disabled        |
+| `LANGFUSE_SECRET_KEY`   | KV secret `langfuse-secret-key` via CM-26    | unset → Langfuse disabled        |
+| `LANGFUSE_HOST`         | literal in Bicep (no secret)                 | `https://cloud.langfuse.com`     |
+| `LANGFUSE_ENABLED`      | optional override                            | unset (use key presence)         |
+
+`agents/observability/langfuse_export.py` reads these at call time, so
+operators can toggle the killswitch by patching the Container App
+revision without redeploying the image.
+
+### One-time operator setup
+
+These steps are out-of-band — the Dev Agent cannot do them. Run after the
+PR for CM-24 merges AND after CM-43's `User Access Administrator` grant
+has been applied (else step 3 errors with `roleAssignments/write`):
+
+1. **Sign up + create project.** [cloud.langfuse.com](https://cloud.langfuse.com) →
+   create the `condomanager-prod` project on the Hobby tier (free).
+2. **Generate API keys.** Project → Settings → API Keys → Create. Save
+   the public key (`pk_…`) and secret key (`sk_…`) — these are sensitive,
+   treat them like the Twilio auth token.
+3. **Set the two KV secrets** in `kv-condomanager-prod`:
+   ```bash
+   az keyvault secret set --vault-name kv-condomanager-prod \
+       --name langfuse-public-key --value <pk_…>
+   az keyvault secret set --vault-name kv-condomanager-prod \
+       --name langfuse-secret-key --value <sk_…>
+   ```
+4. **Build three dashboards** in the Langfuse UI under Dashboards → New
+   Dashboard. Queries (Langfuse query builder, all filter `env=prod`):
+
+   | Dashboard | Chart | Metric | Group by | Why |
+   |-----------|-------|--------|----------|-----|
+   | Cost/day | Bar | `total_cost` | `day` | Detect budget creep before the CM-26 Azure-Monitor alert fires |
+   | p95 latency | Line | `latency_ms` percentile 95 | `hour` | Plan-mode tier degradation, vendor incident detection |
+   | Error rate | Line | `error_rate` | `agent_name` (from metadata) | Stuck nodes surface before tenant tickets arrive |
+
+   These are starting templates — the UI lets the operator tweak time
+   windows and add per-tenant filters (`tenant_id` is attached as
+   observation metadata once that contextvar lands in a later story).
+
+### Wiring future LangGraph nodes
+
+When orchestrator nodes land (CM-28+), decorate each "key" node with
+`@observe_node("triage.classify")` etc. so the dashboard's per-agent
+breakdown shows real data. The decorator is a transparent no-op
+locally (Langfuse keys unset) — no test changes required.
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,

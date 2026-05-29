@@ -58,6 +58,11 @@ dependencies = [
   # + sampler wiring in one supported call. The `configure_azure_monitor`
   # `enable_live_metrics` and `sampler` kwargs are stable in 1.6+.
   "azure-monitor-opentelemetry>=1.6,<2",
+  # CM-24: Langfuse SDK for production LLM observability. @observe decorator
+  # is the primary surface; keys are read from env (sourced from KV in prod
+  # via the CM-26 secretRef wiring). Coexists with App Insights — different
+  # backend purpose (LLM cost/quality vs engineering observability).
+  "langfuse>=2.40,<3",
 ]
 
 [project.optional-dependencies]
@@ -101,7 +106,7 @@ strict = true
 files = ["agents"]
 # Third-party libs without type stubs — silence the noise.
 [[tool.mypy.overrides]]
-module = ["traceloop.*", "openinference.*", "respx.*", "uvicorn"]
+module = ["traceloop.*", "openinference.*", "respx.*", "uvicorn", "langfuse.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -47,6 +47,25 @@ def reset_otel() -> Generator[None, None, None]:
     _reset_otel_globals()
 
 
+@pytest.fixture(autouse=True)
+def langfuse_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """CM-24: force-disable Langfuse for every test unless re-enabled.
+
+    Prevents a developer's local ``LANGFUSE_*`` env from leaking into the
+    test suite (which would attempt real HTTP calls against Langfuse
+    Cloud). Tests that explicitly need Langfuse enabled call
+    ``monkeypatch.setenv`` themselves — per-test monkeypatch wins over
+    this fixture by pytest's normal precedence.
+    """
+    for k in (
+        "LANGFUSE_PUBLIC_KEY",
+        "LANGFUSE_SECRET_KEY",
+        "LANGFUSE_HOST",
+        "LANGFUSE_ENABLED",
+    ):
+        monkeypatch.delenv(k, raising=False)
+
+
 @pytest.fixture
 def in_memory_spans() -> Generator[InMemorySpanExporter, None, None]:
     """Install an in-memory exporter + return it for `.get_finished_spans()`.

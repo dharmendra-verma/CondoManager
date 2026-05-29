@@ -23,6 +23,14 @@
 // on the container. Python's `configure_otel` reads that env var and switches
 // to the Azure Monitor exporter. Empty string omits both `secrets[]` and the
 // env var — back-compat for callers that don't wire App Insights.
+//
+// CM-24: Langfuse production keys (`langfuse-public-key`, `langfuse-secret-key`)
+// will follow the same KV→secretRef pattern as APPLICATIONINSIGHTS_CONNECTION_STRING
+// once CM-26 wires the chain. Future env vars are LANGFUSE_PUBLIC_KEY,
+// LANGFUSE_SECRET_KEY, and LANGFUSE_HOST (literal `https://cloud.langfuse.com`).
+// Until then, `agents/observability/langfuse_export.py` reads them from
+// `os.environ`; both keys unset (the default) means Langfuse stays disabled
+// — see is_langfuse_enabled() in that module.
 
 targetScope = 'resourceGroup'
 
