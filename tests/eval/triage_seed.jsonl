@@ -8,3 +8,193 @@
 {"inputs": {"message": "Need to escalate this - third request for noise complaint follow-up", "tenant_id": "t-008"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
 {"inputs": {"message": "My dishwasher won't drain - I'd like to schedule a visit", "tenant_id": "t-009"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
 {"inputs": {"message": "Hi! Just wanted to confirm the elevator inspection is still on Friday", "tenant_id": "t-010"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The garbage disposal made a grinding noise and now it is dead", "tenant_id": "t-011"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The bathroom faucet drips constantly, can someone take a look", "tenant_id": "t-012"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "My toilet keeps running long after I flush it", "tenant_id": "t-013"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The toilet is overflowing onto the bathroom floor right now", "tenant_id": "t-014"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "No hot water in the whole unit since this morning", "tenant_id": "t-015"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Heater stopped working and it is freezing in here tonight", "tenant_id": "t-016"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "The AC is blowing warm air in the middle of this heat wave", "tenant_id": "t-017"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "I smell gas in my kitchen and it is getting stronger", "tenant_id": "t-018"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "There is a burst pipe flooding my hallway, water everywhere", "tenant_id": "t-019"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "An outlet in the living room is sparking when I plug things in", "tenant_id": "t-020"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "What are the quiet hours in the building?", "tenant_id": "t-021"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Can you tell me how to reserve the party room?", "tenant_id": "t-022"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Is the pool open year round or only in summer?", "tenant_id": "t-023"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Where do I pick up a package that was delivered to the office?", "tenant_id": "t-024"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Hi, just wanted to know the date of the next board meeting", "tenant_id": "t-025"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I want to speak to a manager right now, this has gone on long enough", "tenant_id": "t-026"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "This is the third time I am reporting the same broken elevator. Ridiculous.", "tenant_id": "t-027"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Any update on the work order for my front door lock from last week?", "tenant_id": "t-028"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Still waiting to hear back about ticket 7789, has the part arrived?", "tenant_id": "t-029"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "The refrigerator stopped cooling and my food is starting to spoil", "tenant_id": "t-030"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Light fixture in the hallway flickers on and off", "tenant_id": "t-031"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The closet door came off its track again", "tenant_id": "t-032"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "My balcony door won't lock, it just slides open", "tenant_id": "t-033"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "There is mold growing on the bathroom ceiling", "tenant_id": "t-034"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The smoke detector keeps chirping, I think the battery is low", "tenant_id": "t-035"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "Sewage is backing up into my bathtub and it smells awful", "tenant_id": "t-036"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "I got stuck in the elevator for ten minutes, someone needs to check it", "tenant_id": "t-037"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "How much is the monthly parking fee for a second spot?", "tenant_id": "t-038"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Do I need approval to install a satellite dish on my balcony?", "tenant_id": "t-039"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the guest parking policy for overnight visitors?", "tenant_id": "t-040"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Could you send me a copy of the pet policy please", "tenant_id": "t-041"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I keep getting charged a late fee even though I pay on time. Fix this NOW.", "tenant_id": "t-042"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Nobody has called me back after FIVE messages. I am done being patient.", "tenant_id": "t-043"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Checking in on my maintenance request from Tuesday, ticket 8810", "tenant_id": "t-044"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Has the electrician been scheduled yet for the request I filed?", "tenant_id": "t-045"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The kitchen ceiling light won't turn on even with a new bulb", "tenant_id": "t-046"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Water is dripping from the bathroom exhaust fan", "tenant_id": "t-047"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "My window won't close all the way and cold air is coming in", "tenant_id": "t-048"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The dryer runs but clothes come out still wet", "tenant_id": "t-049"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "There are ants all over my kitchen counter", "tenant_id": "t-050"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "I saw a cockroach in the unit, can pest control come out?", "tenant_id": "t-051"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "The carbon monoxide alarm is going off, what do I do", "tenant_id": "t-052"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "Someone tried to break into my storage unit, the lock is broken", "tenant_id": "t-053"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "urgent"}}
+{"inputs": {"message": "Can you confirm what day recycling is collected?", "tenant_id": "t-054"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the procedure to add my spouse to the lease?", "tenant_id": "t-055"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Are barbecues allowed on the rooftop terrace?", "tenant_id": "t-056"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "How do I get a fob for the side entrance?", "tenant_id": "t-057"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I demand a full refund for the days I had no water. This is outrageous.", "tenant_id": "t-058"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Your contractor damaged my wall and nobody will take responsibility", "tenant_id": "t-059"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Wanted to follow up, is the painter still coming on Friday for ticket 9001?", "tenant_id": "t-060"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Just checking whether my noise complaint was received", "tenant_id": "t-061"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The stove burner clicks but won't light", "tenant_id": "t-062"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "My unit number on the buzzer is wrong and guests can't reach me", "tenant_id": "t-063"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The hallway carpet near 4B is soaked, looks like a leak", "tenant_id": "t-064"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "There is no heat and I have a newborn at home, please hurry", "tenant_id": "t-065"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "Bedroom radiator is stone cold while the rest work fine", "tenant_id": "t-066"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The front lobby door isn't latching, anyone can walk in", "tenant_id": "t-067"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Could you remind me what the move-out notice period is?", "tenant_id": "t-068"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Is there a fee to use the freight elevator for moving?", "tenant_id": "t-069"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What email should I use to submit a noise complaint?", "tenant_id": "t-070"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "ABSOLUTELY UNACCEPTABLE that my heat has been out for a week", "tenant_id": "t-071"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I have called three times and been hung up on. I want a supervisor.", "tenant_id": "t-072"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Any progress on ticket 5560? It has been open for ten days", "tenant_id": "t-073"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Hi, following up to see if the locksmith came by yesterday", "tenant_id": "t-074"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The hot water is only lukewarm no matter how long I wait", "tenant_id": "t-075"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "A ceiling tile fell down in the parking garage", "tenant_id": "t-076"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "My intercom screen is completely black", "tenant_id": "t-077"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The bathroom tap handle snapped off in my hand and water is spraying", "tenant_id": "t-078"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "Tree branch fell and is blocking the parking ramp", "tenant_id": "t-079"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "Do you know if visitor wifi is available in the lounge?", "tenant_id": "t-080"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What time does the front desk open in the morning?", "tenant_id": "t-081"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Can you explain how the maintenance fee increase was calculated?", "tenant_id": "t-082"}, "outputs": {"intent": "inquiry", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "I am sick of being ignored. Either fix the leak or I am calling a lawyer.", "tenant_id": "t-083"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "This is the WORST management I have ever dealt with, do your jobs", "tenant_id": "t-084"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "angry"}}
+{"inputs": {"message": "Just making sure my request 6620 for the broken blinds is in the queue", "tenant_id": "t-085"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Following up again on the same dishwasher issue, still not fixed", "tenant_id": "t-086"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "The garage gate won't open with my remote", "tenant_id": "t-087"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is a crack spreading across my living room ceiling", "tenant_id": "t-088"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "My kitchen drain is completely clogged and won't go down", "tenant_id": "t-089"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "Power is out in half my apartment but neighbors have power", "tenant_id": "t-090"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "The washing machine is leaking water across the laundry room floor", "tenant_id": "t-091"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "Is renters insurance required by the building?", "tenant_id": "t-092"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "How many guests can I bring to the pool at once?", "tenant_id": "t-093"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Where can I find the recycling room on my floor?", "tenant_id": "t-094"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I will be withholding rent until this mold problem is actually dealt with", "tenant_id": "t-095"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Get someone in charge to call me today, I have had enough", "tenant_id": "t-096"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Quick follow up, did the part for my oven ticket arrive yet?", "tenant_id": "t-097"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Checking the status of my parking transfer request", "tenant_id": "t-098"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The thermostat display is blank and I can't set the temperature", "tenant_id": "t-099"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is a constant buzzing sound coming from the electrical panel", "tenant_id": "t-100"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "Half the lights in the stairwell are burnt out", "tenant_id": "t-101"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "My shower has zero water pressure all of a sudden", "tenant_id": "t-102"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The fire alarm in the corridor has been beeping nonstop for an hour", "tenant_id": "t-103"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Can I get a duplicate copy of my parking permit?", "tenant_id": "t-104"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What are the rules for short term subletting?", "tenant_id": "t-105"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Is there a community event calendar I can access?", "tenant_id": "t-106"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Three days with no AC in a heatwave and still no help. Disgraceful.", "tenant_id": "t-107"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I want this escalated to the property owner immediately", "tenant_id": "t-108"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Following up on work order 3344, when will the tech arrive?", "tenant_id": "t-109"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Still no word on my ticket from last Monday, can you check?", "tenant_id": "t-110"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "The doorbell camera at the entrance is hanging by its wires", "tenant_id": "t-111"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "Water heater is making a loud banging noise", "tenant_id": "t-112"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The deadbolt on my door jammed and I am locked out", "tenant_id": "t-113"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "urgent"}}
+{"inputs": {"message": "Ceiling is sagging in the bedroom and dripping, I think the unit above flooded", "tenant_id": "t-114"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "The bathroom tile is cracked and a few pieces came loose", "tenant_id": "t-115"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Do amenities require booking in advance or is it first come first served?", "tenant_id": "t-116"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Can you confirm my account balance for this month?", "tenant_id": "t-117"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the contact number for after hours emergencies?", "tenant_id": "t-118"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "You people are a joke, fix my elevator or refund my fees", "tenant_id": "t-119"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I have documented everything and I am filing a formal complaint with the city", "tenant_id": "t-120"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Just checking in on the gym equipment repair I reported", "tenant_id": "t-121"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Has anyone looked at ticket 2210 about the leaking radiator?", "tenant_id": "t-122"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The garbage chute on my floor is jammed and trash is piling up", "tenant_id": "t-123"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "My oven won't heat past 200 degrees", "tenant_id": "t-124"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "There is water seeping in under my patio door when it rains", "tenant_id": "t-125"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "A window pane shattered in my living room, glass everywhere", "tenant_id": "t-126"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "The hallway smells strongly of smoke, is something burning?", "tenant_id": "t-127"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "My ceiling fan wobbles badly and makes a clicking noise", "tenant_id": "t-128"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Could you send the form to register a new vehicle?", "tenant_id": "t-129"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the policy on installing window film?", "tenant_id": "t-130"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Do you offer bike storage and how do I sign up?", "tenant_id": "t-131"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I cannot believe I have to ask AGAIN. Send someone today or else.", "tenant_id": "t-132"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Your team keeps cancelling appointments on me, I want answers", "tenant_id": "t-133"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Following up: is my package still being held at the front desk?", "tenant_id": "t-134"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Any news on the noise complaint ticket I opened about 12C?", "tenant_id": "t-135"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The bathroom vent isn't pulling steam and the mirror stays fogged", "tenant_id": "t-136"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "My front door is swollen and won't shut properly", "tenant_id": "t-137"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is a steady drip from the sprinkler head in my ceiling", "tenant_id": "t-138"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "The pool gate is broken and won't lock, kids are getting in unsupervised", "tenant_id": "t-139"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "My unit is at 55 degrees and the furnace won't kick on, freezing here", "tenant_id": "t-140"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "Can you tell me when the annual fire inspection is scheduled?", "tenant_id": "t-141"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Is there a charge to replace a lost mailbox key?", "tenant_id": "t-142"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "How do I update the contact info on my account?", "tenant_id": "t-143"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "This is unacceptable, I have been displaced from my own home for days", "tenant_id": "t-144"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I expect compensation for the damage your negligence caused", "tenant_id": "t-145"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Following up on the appliance delivery, was it rescheduled?", "tenant_id": "t-146"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Hi just circling back on ticket 7001, any movement?", "tenant_id": "t-147"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The hot water tank is leaking from the bottom onto the floor", "tenant_id": "t-148"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "There is a wasp nest forming right outside my balcony", "tenant_id": "t-149"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The elevator has been out of service for two days now", "tenant_id": "t-150"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "My garbage disposal leaks under the sink every time I run it", "tenant_id": "t-151"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The motion light in the parking lot never turns on at night", "tenant_id": "t-152"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Could you clarify the rules around holiday decorations in hallways?", "tenant_id": "t-153"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the deadline to submit an architectural change request?", "tenant_id": "t-154"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Do you have a list of approved movers?", "tenant_id": "t-155"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Stop ignoring me. I have been more than patient and I am furious.", "tenant_id": "t-156"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I need this escalated, the same issue has recurred four times now", "tenant_id": "t-157"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Following up to confirm the plumber appointment window for tomorrow", "tenant_id": "t-158"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Any update on whether my key fob was reactivated?", "tenant_id": "t-159"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "My freezer defrosted overnight and there is water all over the kitchen", "tenant_id": "t-160"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "The light switch in the bathroom is warm to the touch", "tenant_id": "t-161"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "There is a persistent sewage smell in my unit", "tenant_id": "t-162"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The garage door came off its track and is stuck halfway", "tenant_id": "t-163"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "My blinds fell off the bracket in the living room", "tenant_id": "t-164"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "How do I report a neighbor parking in my assigned spot?", "tenant_id": "t-165"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Is the rooftop open after 10pm?", "tenant_id": "t-166"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Can you tell me the square footage of a one bedroom unit?", "tenant_id": "t-167"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I have screenshots of every ignored message and I am escalating to the board", "tenant_id": "t-168"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Completely fed up. Either someone fixes this today or I go to the media.", "tenant_id": "t-169"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Circling back on the carpet cleaning request from two weeks ago", "tenant_id": "t-170"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Following up: did you receive my signed parking agreement?", "tenant_id": "t-171"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The bedroom outlet stopped working entirely", "tenant_id": "t-172"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "My toilet won't flush at all", "tenant_id": "t-173"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "Hot water keeps running out after two minutes in the shower", "tenant_id": "t-174"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "There is a gas smell in the stairwell on the third floor", "tenant_id": "t-175"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "The balcony railing is loose and wobbles when I lean on it", "tenant_id": "t-176"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "Could you send instructions for connecting to the parking app?", "tenant_id": "t-177"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What documents do I need for a guest to get temporary access?", "tenant_id": "t-178"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Are there restrictions on running a home business from my unit?", "tenant_id": "t-179"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Enough is enough, I want a manager on the phone within the hour", "tenant_id": "t-180"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "I am extremely disappointed and will be disputing this charge formally", "tenant_id": "t-181"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Following up on the window seal repair, ticket 4488", "tenant_id": "t-182"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Checking back about the leak under my sink, is it scheduled?", "tenant_id": "t-183"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is a small fire in the trash room, I already called 911", "tenant_id": "t-184"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "My kitchen faucet handle is loose and spins freely", "tenant_id": "t-185"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Water is bubbling up from the floor drain in the basement gym", "tenant_id": "t-186"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "neutral"}}
+{"inputs": {"message": "The elevator doors keep reopening and won't let me go up", "tenant_id": "t-187"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "My bedroom window screen is torn", "tenant_id": "t-188"}, "outputs": {"intent": "maintenance", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "How do I add a roommate to the building access system?", "tenant_id": "t-189"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "What is the policy for electric vehicle charging in the garage?", "tenant_id": "t-190"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Can you remind me of the amenity reservation cancellation window?", "tenant_id": "t-191"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I have NEVER been treated so poorly, your office is incompetent", "tenant_id": "t-192"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "angry"}}
+{"inputs": {"message": "I want a written timeline for the repairs or I am escalating legally", "tenant_id": "t-193"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Following up to see if the pest control visit happened today", "tenant_id": "t-194"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Any update on the status of my unit 9B heating ticket?", "tenant_id": "t-195"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "The dryer in the shared laundry is overheating and smells like burning", "tenant_id": "t-196"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "My living room is cold because the window won't seal shut", "tenant_id": "t-197"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is a leak coming through the light fixture in my kitchen", "tenant_id": "t-198"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "urgent"}}
+{"inputs": {"message": "I am beyond frustrated, this is the last time I report the broken buzzer before I go to the board", "tenant_id": "t-199"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "Following up one more time on ticket 5099, it has been open for three weeks", "tenant_id": "t-200"}, "outputs": {"intent": "follow-up", "urgency": "medium", "tone": "frustrated"}}
