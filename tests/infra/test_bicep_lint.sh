@@ -108,7 +108,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -131,7 +131,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -954,6 +954,174 @@ if grep -Fq "guardrail.loop_cap" "$ORCH_DIR/guardrails.py"; then
   echo "   ✓ 'guardrail.loop_cap' literal present in guardrails.py"
 else
   echo "   ✗ guardrails.py MISSING 'guardrail.loop_cap' — CM-26 alert KQL will never match"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-34 — Google Drive → Cosmos vector sync job (Functions app + sync container
+#         + KV secret + agents.knowledge package + function code)
+# ---------------------------------------------------------------------------
+
+FUNCTIONS="$MODULES_DIR/functions.bicep"
+KNOW_DIR="$ROOT/agents/knowledge"
+FN_DIR="$ROOT/functions/gdrive-sync"
+GDRIVE_SMOKE="$ROOT/infra/scripts/gdrive-sync-smoke-test.py"
+
+echo "▶  Verifying cosmos.bicep declares the 'knowledge_sync' container (CM-34)"
+if grep -Eq "id:[[:space:]]+'knowledge_sync'" "$COSMOS" \
+   && grep -Eq "paths:[[:space:]]+\[[[:space:]]*'/source'" "$COSMOS"; then
+  echo "   ✓ knowledge_sync container (partition /source) present"
+else
+  echo "   ✗ cosmos.bicep MISSING knowledge_sync container or /source partition key"
+  FAIL=1
+fi
+
+echo "▶  Verifying keyvault.bicep includes google-drive-sa-key in secretNames (CM-34)"
+if grep -Fq "'google-drive-sa-key'" "$KV"; then
+  echo "   ✓ google-drive-sa-key declared in secretNames"
+else
+  echo "   ✗ google-drive-sa-key MISSING from keyvault.bicep secretNames default"
+  FAIL=1
+fi
+
+echo "▶  Verifying functions.bicep targets Linux Consumption Python + attaches the MI"
+if grep -Fq "linuxFxVersion: 'Python|3.12'" "$FUNCTIONS" \
+   && grep -Fq "name: 'Y1'" "$FUNCTIONS" \
+   && grep -Fq "keyVaultReferenceIdentity: userAssignedIdentityId" "$FUNCTIONS"; then
+  echo "   ✓ Python 3.12 + Y1 Consumption + KV-reference identity wired"
+else
+  echo "   ✗ functions.bicep missing Python 3.12 / Y1 SKU / keyVaultReferenceIdentity"
+  FAIL=1
+fi
+
+echo "▶  Verifying functions.bicep mounts secrets as Key Vault references (no literals)"
+if grep -Fq "@Microsoft.KeyVault(SecretUri=" "$FUNCTIONS" \
+   && grep -Fq "secrets/google-drive-sa-key" "$FUNCTIONS" \
+   && grep -Fq "secrets/azure-openai-key" "$FUNCTIONS"; then
+  echo "   ✓ google-drive-sa-key + azure-openai-key mounted via KV references"
+else
+  echo "   ✗ functions.bicep does NOT mount both secrets via @Microsoft.KeyVault references"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the functions module"
+if grep -Fq "modules/functions.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ functions module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/functions.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains the Function App + plan + storage types"
+for type in "Microsoft.Web/sites" "Microsoft.Web/serverfarms" "Microsoft.Storage/storageAccounts"; do
+  if grep -Fq "$type" /tmp/main.json; then
+    echo "   ✓ $type present in compiled ARM"
+  else
+    echo "   ✗ $type MISSING from compiled ARM"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying agents/knowledge/ package files exist (CM-34)"
+KNOW_FILES=("__init__.py" "models.py" "chunking.py" "embeddings.py" "gdrive_client.py" "cosmos_store.py" "sync.py")
+for f in "${KNOW_FILES[@]}"; do
+  if [ -s "$KNOW_DIR/$f" ]; then
+    echo "   ✓ agents/knowledge/$f present"
+  else
+    echo "   ✗ agents/knowledge/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying functions/gdrive-sync/ deploy package files exist (CM-34)"
+FN_FILES=("function_app.py" "host.json" "requirements.txt")
+for f in "${FN_FILES[@]}"; do
+  if [ -s "$FN_DIR/$f" ]; then
+    echo "   ✓ functions/gdrive-sync/$f present"
+  else
+    echo "   ✗ functions/gdrive-sync/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying function_app.py declares a 30-minute timer trigger (AC)"
+if grep -Fq "0 */30 * * * *" "$FN_DIR/function_app.py" \
+   && grep -Fq "timer_trigger" "$FN_DIR/function_app.py"; then
+  echo "   ✓ timer_trigger with 30-minute NCRONTAB schedule present"
+else
+  echo "   ✗ function_app.py missing the 30-minute timer_trigger schedule"
+  FAIL=1
+fi
+
+echo "▶  Verifying gdrive-sync-smoke-test.py exists (CM-34)"
+if [ -s "$GDRIVE_SMOKE" ]; then
+  echo "   ✓ gdrive-sync-smoke-test.py present"
+else
+  echo "   ✗ infra/scripts/gdrive-sync-smoke-test.py missing"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-36 — Analytics & Forecasting weekly digest (Function App + digests container)
+# ---------------------------------------------------------------------------
+
+ANALYTICS="$MODULES_DIR/analytics.bicep"
+ANALYTICS_PKG="$ROOT/agents/analytics"
+ANALYTICS_FN_DIR="$ROOT/functions/analytics-digest"
+
+echo "▶  Verifying cosmos.bicep declares the 'digests' container with a TTL (CM-36)"
+if grep -Eq "id:[[:space:]]+'digests'" "$COSMOS" \
+   && grep -Eq "paths:[[:space:]]+\[[[:space:]]*'/tenantId'" "$COSMOS"; then
+  echo "   ✓ digests container (partition /tenantId) present"
+else
+  echo "   ✗ cosmos.bicep MISSING digests container or /tenantId partition key"
+  FAIL=1
+fi
+
+echo "▶  Verifying analytics.bicep targets Linux Consumption Python + attaches the MI"
+if grep -Fq "linuxFxVersion: 'Python|3.12'" "$ANALYTICS" \
+   && grep -Fq "name: 'Y1'" "$ANALYTICS" \
+   && grep -Fq "keyVaultReferenceIdentity: userAssignedIdentityId" "$ANALYTICS"; then
+  echo "   ✓ Python 3.12 + Y1 Consumption + KV-reference identity wired"
+else
+  echo "   ✗ analytics.bicep missing Python 3.12 / Y1 SKU / keyVaultReferenceIdentity"
+  FAIL=1
+fi
+
+echo "▶  Verifying analytics.bicep mounts the Slack webhook as a Key Vault reference"
+if grep -Fq "@Microsoft.KeyVault(SecretUri=" "$ANALYTICS" \
+   && grep -Fq "secrets/slack-webhook-url" "$ANALYTICS"; then
+  echo "   ✓ slack-webhook-url mounted via KV reference"
+else
+  echo "   ✗ analytics.bicep does NOT mount slack-webhook-url via @Microsoft.KeyVault"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the analytics module"
+if grep -Fq "modules/analytics.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ analytics module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/analytics.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying agents/analytics/ package files exist (CM-36)"
+ANALYTICS_FILES=("__init__.py" "models.py" "analyze.py" "digest.py" "repository.py" "run.py")
+for f in "${ANALYTICS_FILES[@]}"; do
+  if [ -s "$ANALYTICS_PKG/$f" ]; then
+    echo "   ✓ agents/analytics/$f present"
+  else
+    echo "   ✗ agents/analytics/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying functions/analytics-digest/ declares a weekly timer trigger (AC #6)"
+if grep -Fq "0 0 8 * * 1" "$ANALYTICS_FN_DIR/function_app.py" \
+   && grep -Fq "timer_trigger" "$ANALYTICS_FN_DIR/function_app.py"; then
+  echo "   ✓ timer_trigger with weekly NCRONTAB schedule present"
+else
+  echo "   ✗ analytics-digest function_app.py missing the weekly timer_trigger schedule"
   FAIL=1
 fi
 

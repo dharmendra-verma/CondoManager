@@ -1,0 +1,48 @@
+{"inputs": {"message": "I have contacted my lawyer about this and will be suing the building", "tenant_id": "t-301"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "See you in court if this is not fixed, my attorney is already involved", "tenant_id": "t-302"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "This negligence is a violation of my rights and I will hold you liable", "tenant_id": "t-303"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "My doctor says the mold made me sick, I am considering legal action", "tenant_id": "t-304"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "I will be filing a lawsuit for the damage and the injury this caused", "tenant_id": "t-305"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "You are legally liable for my belongings that were ruined", "tenant_id": "t-306"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "I have spoken to an attorney and I know my rights as a tenant", "tenant_id": "t-307"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "If you ignore this I will sue and take you to court", "tenant_id": "t-308"}, "outputs": {"category": "legal", "legal_risk": true}}
+{"inputs": {"message": "There is a serious gas hazard in the stairwell, it is dangerous", "tenant_id": "t-309"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "The exposed wiring in the hallway is a fire danger", "tenant_id": "t-310"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "The balcony railing is loose and someone could fall", "tenant_id": "t-311"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "A child got injured on the broken playground equipment", "tenant_id": "t-312"}, "outputs": {"category": "safety", "legal_risk": true}}
+{"inputs": {"message": "The stairwell is pitch black at night, this is a safety hazard", "tenant_id": "t-313"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "There is a strong gas smell on the third floor, this is dangerous", "tenant_id": "t-314"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "The fire exit is blocked and the alarm does not work", "tenant_id": "t-315"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "My elderly mother could fall on these icy unsalted steps", "tenant_id": "t-316"}, "outputs": {"category": "safety", "legal_risk": false}}
+{"inputs": {"message": "This is the third time I am reporting the same broken elevator", "tenant_id": "t-317"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "I keep reporting the leak and it keeps coming back, again and again", "tenant_id": "t-318"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "The fourth time now that the heat has failed this winter", "tenant_id": "t-319"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "Every time it rains my ceiling leaks and nothing is ever done", "tenant_id": "t-320"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "Still not fixed after I reported it three times already", "tenant_id": "t-321"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "The same pest problem keeps coming back repeatedly", "tenant_id": "t-322"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "I have reported the noisy neighbor again and again with no result", "tenant_id": "t-323"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "This recurring elevator outage has happened every month", "tenant_id": "t-324"}, "outputs": {"category": "repeat", "legal_risk": false}}
+{"inputs": {"message": "The contractor you promised never showed up for the appointment", "tenant_id": "t-325"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "You promised the repair last week and it failed to happen", "tenant_id": "t-326"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "The plumber was a no-show despite the confirmed booking", "tenant_id": "t-327"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "The appointment was cancelled on me for the second time", "tenant_id": "t-328"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "The technician came but failed to actually fix anything", "tenant_id": "t-329"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "You promised an ETA of yesterday and nobody ever came", "tenant_id": "t-330"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "The repair that was promised did not get done again", "tenant_id": "t-331"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "The vendor cancelled and never rescheduled the visit", "tenant_id": "t-332"}, "outputs": {"category": "service_failure", "legal_risk": false}}
+{"inputs": {"message": "Nobody has responded to any of my five messages", "tenant_id": "t-333"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "I have been ignored for two weeks, no one will get back to me", "tenant_id": "t-334"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "My emails go unanswered and nobody picks up the phone", "tenant_id": "t-335"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "No response at all since I first reached out", "tenant_id": "t-336"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "Nobody got back to me after I left several voicemails", "tenant_id": "t-337"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "I feel completely ignored, no one has acknowledged my issue", "tenant_id": "t-338"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "Still no response to the request I sent ten days ago", "tenant_id": "t-339"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "My messages remain unanswered and I feel unheard", "tenant_id": "t-340"}, "outputs": {"category": "communication_breakdown", "legal_risk": false}}
+{"inputs": {"message": "My heat is out, the sink leaks, and the door lock is broken too", "tenant_id": "t-341"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "There are several problems: no hot water, a broken window, and pests", "tenant_id": "t-342"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "The fridge died, the toilet runs, and the balcony door won't close", "tenant_id": "t-343"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "Multiple issues at once: leak in kitchen, no heat, and a dead outlet", "tenant_id": "t-344"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "I have a list: broken blinds, clogged drain, and a flickering light", "tenant_id": "t-345"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "Several things are wrong: the dryer, the dishwasher, and the heater", "tenant_id": "t-346"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "Three separate problems all need attention in my unit this week", "tenant_id": "t-347"}, "outputs": {"category": "multi_issue", "legal_risk": false}}
+{"inputs": {"message": "My apartment has a leak, a broken stove, and a faulty smoke detector", "tenant_id": "t-348"}, "outputs": {"category": "multi_issue", "legal_risk": false}}

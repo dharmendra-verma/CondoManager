@@ -82,6 +82,10 @@ dependencies = [
   # DefaultAzureCredential routes through the CM-18 User-Assigned MI in
   # prod; local dev uses az login.
   "azure-cosmos>=4.7,<5",
+  # CM-34: LangChain's text splitter for the Drive→Cosmos chunking pipeline
+  # (agents/knowledge/chunking.py, reused by CM-33). Already pulled in
+  # transitively by `langchain`; declared explicitly so the import is stable.
+  "langchain-text-splitters>=0.3,<1",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +95,16 @@ dev = [
   "respx>=0.21,<1",       # httpx + openai HTTP mocking for tests
   "ruff>=0.6,<1",
   "mypy>=1.11,<2",
+]
+# CM-34: Google Drive client deps for agents/knowledge/gdrive_client.py. These
+# are an OPTIONAL, deploy-time extra (only the gdrive-sync Function App needs
+# them — see functions/gdrive-sync/requirements.txt). gdrive_client lazy-imports
+# them, so they stay out of the base runtime + the test env (the orchestrator
+# is tested through an in-memory fake Drive). Kept out of requirements-lock.txt
+# for the same reason.
+gdrive = [
+  "google-api-python-client>=2.100,<3",
+  "google-auth>=2.35,<3",
 ]
 
 [tool.setuptools.packages.find]
@@ -124,8 +138,20 @@ python_version = "3.12"
 strict = true
 files = ["agents"]
 # Third-party libs without type stubs — silence the noise.
+# CM-34 adds the google-* Drive libs (optional `gdrive` extra, not installed in
+# CI) + langchain-text-splitters (no py.typed marker), so mypy treats them as
+# Any rather than erroring on a missing module / marker.
 [[tool.mypy.overrides]]
-module = ["traceloop.*", "openinference.*", "respx.*", "uvicorn", "langfuse.*"]
+module = [
+  "traceloop.*",
+  "openinference.*",
+  "respx.*",
+  "uvicorn",
+  "langfuse.*",
+  "google.*",
+  "googleapiclient.*",
+  "langchain_text_splitters.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

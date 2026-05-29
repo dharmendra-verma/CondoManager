@@ -48,6 +48,14 @@ param secretNames array = [
   // via secretRef. seed-app-insights-secret.sh populates it from the deployment
   // output post-deploy; until then it sits as the CM-18 REPLACE-ME placeholder.
   'app-insights-connection-string'
+  // CM-32: Slack incoming-webhook URL for the Escalation Agent's manager
+  // alert. Mounted as SLACK_WEBHOOK_URL; the notifier falls back to logging
+  // while this is the REPLACE-ME placeholder, so dev/CI never POST.
+  'slack-webhook-url'
+  // CM-34: Google service-account JSON key for the Drive → Cosmos sync job.
+  // The gdrive-sync Function App reads it via a Key Vault reference; operators
+  // paste the SA key out-of-band (see docs/INFRA.md). Placeholder until then.
+  'google-drive-sa-key'
 ]
 
 var vaultName = 'kv-condomanager-${env}'

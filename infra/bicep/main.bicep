@@ -65,6 +65,15 @@ param alertEmail string = ''
 @minValue(1)
 param hallucinationSpikeMinCalls int = 10
 
+@description('Google Drive folder id the CM-34 sync job watches. Empty by default; an operator supplies it post-deploy (the function skips cleanly until then). Not a secret — a folder id is not sensitive.')
+param gdriveFolderId string = ''
+
+@description('Tenant id the CM-34 Drive sync attributes ingested policy docs to (Cosmos /tenantId partition).')
+param gdriveTenantId string = 'default'
+
+@description('Azure OpenAI endpoint for CM-34 embeddings. Empty until an Azure OpenAI resource is provisioned in a later story; the sync function skips cleanly when unset.')
+param azureOpenAiEndpoint string = ''
+
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
   name: 'tags-${env}'
@@ -250,6 +259,45 @@ module cosmos './modules/cosmos.bicep' = {
   }
 }
 
+// CM-34 — Google Drive → Cosmos vector sync job (Azure Functions Timer).
+// Linux Consumption Python 3.12 Function App + dedicated storage. Attached to
+// the shared MI for Cosmos data-plane access + Key Vault reference resolution;
+// secrets (google-drive-sa-key, azure-openai-key) mount as KV references.
+// Depends (implicitly, via passed outputs) on cosmos + keyvault + managed
+// identity + app insights.
+module functions './modules/functions.bicep' = {
+  name: 'functions-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+    keyVaultUri: keyvault.outputs.vaultUri
+    gdriveFolderId: gdriveFolderId
+    gdriveTenantId: gdriveTenantId
+    azureOpenAiEndpoint: azureOpenAiEndpoint
+  }
+}
+
+// CM-36 — weekly Analytics & Forecasting digest job (Azure Functions Timer).
+// Dedicated Linux Consumption Function App (separate from gdrive-sync) so the
+// weekly schedule + failures are isolated. Reads tickets + escalations from
+// Cosmos via the shared MI; posts the digest to the slack-webhook-url KV ref.
+module analytics './modules/analytics.bicep' = {
+  name: 'analytics-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+    keyVaultUri: keyvault.outputs.vaultUri
+  }
+}
+
 // Azure Container Registry (Basic SKU) — destination for the curated Python
 // base image built by .github/workflows/base-image.yml. (CM-20)
 // The hello-world Container App still pulls from MCR; ACR's first consumers
@@ -324,3 +372,13 @@ output alertRuleNames object = {
 // hard-coding the convention.
 output langsmithProject string = langsmithEnabled ? langsmithProject : ''
 output langsmithEnabled bool = langsmithEnabled
+
+// CM-34 outputs — Function App identity for the post-deploy `func publish`
+// step + the gdrive-sync smoke test discovery.
+output functionAppName string = functions.outputs.functionAppName
+output functionAppId string = functions.outputs.functionAppId
+output functionAppDefaultHostName string = functions.outputs.functionAppDefaultHostName
+
+// CM-36 — analytics digest Function App (used by the deploy step + smoke test).
+output analyticsFunctionAppName string = analytics.outputs.functionAppName
+output analyticsFunctionAppId string = analytics.outputs.functionAppId
