@@ -957,6 +957,51 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-41 — pre-register Azure resource providers in the bootstrap script
+#
+# The bootstrap script (setup-azure-oidc.sh) can't run in CI — the CI principal
+# is intentionally RG-scoped (CM-15) and provider registration is a sub-level
+# action. So these checks statically guard the namespace list + the wait logic
+# against typo/regression drift, the same way the CM-18 secret-name-sync check
+# guards keyvault.bicep ↔ seed-keyvault-secrets.sh.
+# ---------------------------------------------------------------------------
+
+OIDC_SH="$ROOT/infra/scripts/setup-azure-oidc.sh"
+
+echo "▶  Verifying setup-azure-oidc.sh exists (CM-41)"
+if [ -s "$OIDC_SH" ]; then
+  echo "   ✓ setup-azure-oidc.sh present"
+else
+  echo "   ✗ infra/scripts/setup-azure-oidc.sh missing or empty"
+  FAIL=1
+fi
+
+echo "▶  Verifying setup-azure-oidc.sh registers every required provider (CM-41 AC1)"
+# Keep this list identical to the namespaces main.bicep deploys.
+REQUIRED_PROVIDERS=("Microsoft.Network" "Microsoft.OperationalInsights" "Microsoft.App" \
+                    "Microsoft.DocumentDB" "Microsoft.KeyVault" "Microsoft.ContainerRegistry" \
+                    "Microsoft.Insights")
+for ns in "${REQUIRED_PROVIDERS[@]}"; do
+  if grep -Fq "$ns" "$OIDC_SH"; then
+    echo "   ✓ provider '$ns' referenced in bootstrap script"
+  else
+    echo "   ✗ provider '$ns' MISSING from setup-azure-oidc.sh — its first deploy will hit MissingSubscriptionRegistration"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying setup-azure-oidc.sh registers AND waits for 'Registered' (CM-41 AC2/AC3)"
+# `az provider register` makes it register; polling registrationState is how it
+# blocks until done (AC3) and short-circuits already-registered namespaces (AC2).
+if grep -Fq "az provider register" "$OIDC_SH" \
+   && grep -Fq "registrationState" "$OIDC_SH"; then
+  echo "   ✓ provider register + registrationState wait present"
+else
+  echo "   ✗ setup-azure-oidc.sh missing 'az provider register' or the 'registrationState' wait"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"

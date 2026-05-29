@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# setup-azure-oidc.sh — one-time setup for CM-15, extended by CM-43
+# setup-azure-oidc.sh — one-time setup for CM-15, extended by CM-43 and CM-41
 # Creates: Azure AD app + service principal + 4 federated credentials.
 # Grants: Contributor at subscription scope + User Access Administrator at the
 #         rg-condomanager RG scope (the latter is needed because Bicep modules
 #         under infra/bicep/modules/ include Microsoft.Authorization/roleAssignments
 #         resources — see CM-43).
+# Registers: the Azure resource providers every platform deploy needs (CM-41) —
+#         a subscription-level action the RG-scoped CI principal cannot do itself.
 # Outputs: the 3 PUBLIC identifiers you need for GitHub Actions secrets.
 #
 # Run this in Azure Cloud Shell (https://shell.azure.com) on the same account
@@ -13,7 +15,8 @@
 # sensitive — they're public identifiers. The actual auth happens via OIDC
 # token exchange at GitHub Actions runtime; no client secret is created.
 #
-# Estimated runtime: 30-60 seconds.
+# Estimated runtime: 30-60 seconds on an already-bootstrapped subscription;
+# add a few minutes the first time, while resource providers register (CM-41).
 # Requirements: az CLI (pre-installed in Cloud Shell), Owner OR User Access
 # Administrator on the target subscription.
 
@@ -112,6 +115,67 @@ else
     --only-show-errors > /dev/null
   echo "   ✓ $UAA_ROLE granted at $RG_SCOPE"
 fi
+
+# -----------------------------------------------------------------------------
+# 3c. Register Azure resource providers (CM-41)
+#     `az provider register` is a SUBSCRIPTION-level action. The CI service
+#     principal is intentionally scoped to Contributor on rg-condomanager only
+#     (CM-15), so it cannot self-register — and the first deploy of each new
+#     resource type otherwise dies with:
+#         MissingSubscriptionRegistration: The subscription is not registered
+#         to use namespace 'Microsoft.<X>'.
+#     We register them here, once, at subscription scope as the owner.
+#
+#     Idempotent: an already-Registered namespace short-circuits immediately,
+#     so re-runs do zero waiting. On a fresh subscription we block until each
+#     namespace reaches 'Registered' (bounded by PROVIDER_WAIT_SECS) so the
+#     script never returns success while a registration is still in flight.
+#
+#     Keep PROVIDERS in sync with the namespaces main.bicep deploys. The lint
+#     test (tests/infra/test_bicep_lint.sh, CM-41 section) guards this list.
+# -----------------------------------------------------------------------------
+PROVIDERS=(
+  "Microsoft.Network"               # CM-16  virtualNetworks
+  "Microsoft.OperationalInsights"   # CM-16  Log Analytics workspaces
+  "Microsoft.App"                   # CM-16  Container Apps env + apps
+  "Microsoft.DocumentDB"            # CM-17  Cosmos DB
+  "Microsoft.KeyVault"              # CM-18  Key Vault
+  "Microsoft.ContainerRegistry"     # CM-20  ACR
+  "Microsoft.Insights"              # CM-22/25/26  App Insights, workbooks, alerts
+)
+PROVIDER_WAIT_SECS=300   # max 5 min per provider before we give up and abort
+PROVIDER_POLL_SECS=10
+
+ensure_provider () {
+  local ns="$1"
+  local state
+  state="$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || echo "Unknown")"
+  if [ "$state" = "Registered" ]; then
+    echo "   ✓ $ns already Registered"
+    return 0
+  fi
+  echo "   ▶ Registering $ns (current state: $state)..."
+  az provider register --namespace "$ns" --only-show-errors > /dev/null
+  local waited=0
+  while [ "$waited" -lt "$PROVIDER_WAIT_SECS" ]; do
+    state="$(az provider show --namespace "$ns" --query registrationState -o tsv)"
+    if [ "$state" = "Registered" ]; then
+      echo "   ✓ $ns Registered (after ${waited}s)"
+      return 0
+    fi
+    sleep "$PROVIDER_POLL_SECS"
+    waited=$((waited + PROVIDER_POLL_SECS))
+  done
+  echo "   ✗ $ns did not reach 'Registered' within ${PROVIDER_WAIT_SECS}s (last state: $state)" >&2
+  echo "     Re-run this script once registration finishes — it is idempotent." >&2
+  return 1
+}
+
+echo ""
+echo "▶  Registering Azure resource providers (idempotent; waits for 'Registered')..."
+for ns in "${PROVIDERS[@]}"; do
+  ensure_provider "$ns"
+done
 
 # -----------------------------------------------------------------------------
 # 4. Federated credentials (OIDC) — main branch + pull_request + dev / prod
