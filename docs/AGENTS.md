@@ -110,17 +110,27 @@ The two non-negotiables:
    statement. If it trips, return `_guardrail_termination(reason)` and
    do no further work in this node.
 
-The stub `triage` node uses a tiny keyword heuristic over `raw_message`
-to make the spine fully testable without an LLM:
+### `triage` is now a real agent (CM-30)
 
-| Message contains              | Routes to    |
-|-------------------------------|--------------|
-| `"human"` or `"escalat"`      | `escalation` |
-| `"fix"` / `"broken"` / `"leak"`| `maintenance` |
-| anything else                 | `knowledge`  |
+The `triage` node is the first real specialist agent — see
+[`docs/TRIAGE.md`](TRIAGE.md). It classifies `intent` / `urgency` / `tone`
+with GPT-4o-mini (Pydantic-validated structured output), looks up the
+tenant's recent ticket history, and routes by intent:
 
-CM-30 replaces this with real GPT-4o-mini classification; the spine
-stays the same.
+| Intent        | Routes to     |
+|---------------|---------------|
+| `maintenance` | `maintenance` |
+| `inquiry`     | `knowledge`   |
+| `escalation`  | `escalation`  |
+| `follow-up`   | `maintenance` |
+| `unknown`     | `knowledge`   |
+
+It still runs **without** OpenAI credentials: `get_triage_classifier()`
+falls back to a deterministic keyword heuristic when `OPENAI_API_KEY` is
+unset, preserving the original stub's routing (`"human"`/`"escalat"` →
+escalation, `"fix"`/`"broken"`/`"leak"` → maintenance, else → knowledge) so
+this hello-world spine stays testable offline. The spine topology is
+unchanged. CM-31 (maintenance) and CM-32 (escalation) remain stubs.
 
 ---
 

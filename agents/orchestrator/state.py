@@ -37,8 +37,11 @@ from pydantic import BaseModel, Field
 # Re-imported here so any code doing ``from agents.orchestrator.state
 # import Channel`` (e.g. the orchestrator __init__'s re-export and the
 # CM-28 demo) keeps working — the name remains in this module's
-# namespace.
-from agents.channels.schema import Channel, NormalizedMessage
+# namespace. The explicit ``X as X`` form marks these as intentional
+# re-exports so mypy --strict (no_implicit_reexport) accepts the
+# downstream ``from .state import Channel`` in orchestrator/__init__.py.
+from agents.channels.schema import Channel as Channel
+from agents.channels.schema import NormalizedMessage as NormalizedMessage
 
 
 class Intent(StrEnum):

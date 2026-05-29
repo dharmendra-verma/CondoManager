@@ -525,6 +525,112 @@ When orchestrator nodes land (CM-28+), decorate each "key" node with
 breakdown shows real data. The decorator is a transparent no-op
 locally (Langfuse keys unset) — no test changes required.
 
+## Google Drive → Cosmos vector sync (CM-34)
+
+A scheduled Azure Functions Timer job keeps the Cosmos `policies-vector`
+container in lockstep with a Google Drive folder of policy/SOP documents, so
+the Knowledge Agent (CM-33) always retrieves current rules.
+
+| Aspect            | Value                                                            |
+|-------------------|------------------------------------------------------------------|
+| Function App      | `func-condomanager-<env>` (Linux, Python 3.12)                   |
+| Plan              | `plan-condomanager-<env>-fn` — Y1 Consumption (scale-to-zero)    |
+| Storage           | `stcondomanager<env>fn` (Standard_LRS, required by the runtime)  |
+| Schedule          | every 30 min — NCRONTAB `0 */30 * * * *`                         |
+| Identity          | shared User-Assigned MI `id-condomanager-<env>` (CM-18)          |
+| Code              | `functions/gdrive-sync/` (logic in `agents/knowledge/`)          |
+| State container   | `knowledge_sync` (partition `/source`) — Drive page token + hashes |
+| Vector target     | `policies-vector` (CM-17), `text-embedding-3-small` @ 1536 dims  |
+
+### How it works
+
+1. **Delta detection** rides the Drive **Changes API**: the `startPageToken`
+   is persisted in a `knowledge_sync` doc and replayed each run, so only
+   modified docs come back. The first run has no token, so it enumerates the
+   folder once and captures a token for next time.
+2. A **content-hash guard** skips even Drive-reported changes whose text is
+   unchanged — no wasted embedding spend.
+3. Changed docs are **chunked** (`RecursiveCharacterTextSplitter`, ~300 words)
+   and **re-embedded**, then upserted with **deterministic chunk ids**
+   (`{tenantId}:{doc_id}:{chunk_index}`). A re-run on identical content writes
+   the same ids — **idempotent, no duplicate chunks**. After a re-index,
+   trailing chunks from a now-shorter doc are deleted.
+4. **Observability**: each run emits structured `gdrive_sync.run` (summary) and
+   per-doc `gdrive_sync.doc` log lines via the CM-27 JSON logger, which flow to
+   App Insights / Log Analytics — query run history + per-doc status in KQL.
+
+### Config (Function App settings, wired by `functions.bicep`)
+
+Non-secret app settings are set at deploy time; secrets mount as Key Vault
+references resolved by the MI:
+
+| Setting | Source |
+|---|---|
+| `COSMOS_ENDPOINT` | cosmos module output |
+| `GDRIVE_FOLDER_ID` | `--parameters gdriveFolderId=...` (operator) |
+| `GDRIVE_TENANT_ID` | `--parameters gdriveTenantId=...` (default `default`) |
+| `AZURE_OPENAI_ENDPOINT` | `--parameters azureOpenAiEndpoint=...` (operator) |
+| `AZURE_OPENAI_EMBEDDING_DEPLOYMENT` | default `text-embedding-3-small` |
+| `GOOGLE_DRIVE_SA_KEY` | KV reference → `google-drive-sa-key` |
+| `AZURE_OPENAI_API_KEY` | KV reference → `azure-openai-key` |
+
+The function **skips cleanly** (logs `skipped — unconfigured`) until the Drive
+folder, SA key, and Azure OpenAI settings are all present — so provisioning
+before the operator finishes setup is safe.
+
+### One-time operator setup (out-of-band — the Dev Agent cannot do these)
+
+1. **Google service account.** In Google Cloud, create a service account, enable
+   the **Drive API**, and create a JSON key. Share the target Drive folder with
+   the SA's email (Viewer is enough). Store the JSON key in Key Vault:
+   ```bash
+   az keyvault secret set --vault-name kv-condomanager-dev \
+       --name google-drive-sa-key --file ./sa-key.json
+   ```
+2. **Azure OpenAI.** Once an Azure OpenAI resource + a `text-embedding-3-small`
+   deployment exist, set `azureOpenAiEndpoint` at deploy time and seed
+   `azure-openai-key` (CM-18 secret).
+3. **Cosmos data-plane role.** The MI needs the **Cosmos DB Built-in Data
+   Contributor** SQL role to read/write via `DefaultAzureCredential` (control-
+   plane Contributor is not enough — same dependency as CM-28's checkpointer):
+   ```bash
+   MI_PRINCIPAL=$(az identity show -g rg-condomanager -n id-condomanager-dev --query principalId -o tsv)
+   az cosmosdb sql role assignment create -g rg-condomanager \
+       --account-name cosmos-condomanager-dev \
+       --role-definition-id 00000000-0000-0000-0000-000000000002 \
+       --principal-id "$MI_PRINCIPAL" --scope "/"
+   ```
+4. **Set the watched folder:** redeploy `main.bicep` with `gdriveFolderId=<id>`.
+
+### Deploying the function code
+
+Bicep provisions the Function App; the **code** is published out-of-band (a CI
+zip-deploy is a planned follow-up). The deploy package bundles the repo's
+`agents/` package next to the function:
+
+```bash
+# From the repo root, stage agents/ alongside the function and publish.
+cp -r agents functions/gdrive-sync/agents
+cd functions/gdrive-sync
+func azure functionapp publish func-condomanager-dev --python
+```
+
+### Post-deploy smoke test
+
+`infra/scripts/gdrive-sync-smoke-test.py` exercises the real Cosmos store with
+an in-process fake Drive + stub embedder — validating the Cosmos wiring and the
+idempotency property without needing a real Google service account:
+
+```bash
+pip install "azure-cosmos>=4.7" "azure-identity>=1.15" "pydantic>=2.7" "langchain-text-splitters>=0.3"
+COSMOS_ENDPOINT=$(az cosmosdb show -g rg-condomanager -n cosmos-condomanager-dev --query documentEndpoint -o tsv)
+export COSMOS_ENDPOINT
+python infra/scripts/gdrive-sync-smoke-test.py
+```
+
+A bootstrap run indexes one doc; an immediate re-run is asserted to be a clean
+idempotent no-op. Exit 0 == healthy.
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,
