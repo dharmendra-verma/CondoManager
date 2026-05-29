@@ -53,7 +53,7 @@ class WebAdapter:
         payload = {
             **raw,
             "channel": Channel.WEB,
-            "received_by_us_at": dt.datetime.now(dt.timezone.utc),
+            "received_by_us_at": dt.datetime.now(dt.UTC),
         }
         try:
             return NormalizedMessage.model_validate(payload)

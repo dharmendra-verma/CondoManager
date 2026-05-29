@@ -8,7 +8,6 @@ no-op preprocessor stubs return the documented sentinel strings.
 from __future__ import annotations
 
 import pytest
-
 from agents.channels.base import ChannelAdapter
 from agents.channels.preprocessors.audio import (
     NOOP_AUDIO_SENTINEL,

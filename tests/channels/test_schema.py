@@ -11,8 +11,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-from pydantic import ValidationError
-
 from agents.channels.schema import (
     AudioAttachment,
     Channel,
@@ -21,6 +19,7 @@ from agents.channels.schema import (
     NormalizedMessage,
     TextAttachment,
 )
+from pydantic import ValidationError
 
 
 # Helper: a minimal valid NormalizedMessage payload.
@@ -30,8 +29,8 @@ def _make(**overrides: object) -> NormalizedMessage:
         "tenant_id": "t-1",
         "sender_id": "user_42",
         "content": "hello",
-        "received_at": dt.datetime(2026, 5, 29, 10, 0, tzinfo=dt.timezone.utc),
-        "received_by_us_at": dt.datetime(2026, 5, 29, 10, 0, 1, tzinfo=dt.timezone.utc),
+        "received_at": dt.datetime(2026, 5, 29, 10, 0, tzinfo=dt.UTC),
+        "received_by_us_at": dt.datetime(2026, 5, 29, 10, 0, 1, tzinfo=dt.UTC),
         "upstream_message_id": "web_abc",
     }
     payload.update(overrides)
@@ -61,8 +60,8 @@ def test_required_fields_raise_when_missing() -> None:
             "tenant_id": "t",
             "sender_id": "s",
             "content": "c",
-            "received_at": dt.datetime.now(dt.timezone.utc),
-            "received_by_us_at": dt.datetime.now(dt.timezone.utc),
+            "received_at": dt.datetime.now(dt.UTC),
+            "received_by_us_at": dt.datetime.now(dt.UTC),
             "upstream_message_id": "u",
         }
         payload.pop(missing)
@@ -122,8 +121,8 @@ def test_unknown_attachment_kind_raises() -> None:
 
 
 def test_latency_ms_property() -> None:
-    early = dt.datetime(2026, 5, 29, 10, 0, 0, tzinfo=dt.timezone.utc)
-    later = dt.datetime(2026, 5, 29, 10, 0, 0, 250000, tzinfo=dt.timezone.utc)  # +250ms
+    early = dt.datetime(2026, 5, 29, 10, 0, 0, tzinfo=dt.UTC)
+    later = dt.datetime(2026, 5, 29, 10, 0, 0, 250000, tzinfo=dt.UTC)  # +250ms
     msg = _make(received_at=early, received_by_us_at=later)
     assert msg.latency_ms == pytest.approx(250.0, abs=0.001)
 

@@ -13,11 +13,9 @@ generous so the test doesn't flake under CI noise.
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import time
 
 import pytest
-
 from agents.channels.web import WebAdapter
 
 

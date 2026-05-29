@@ -10,7 +10,6 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
-
 from agents.channels.base import NormalizationError
 from agents.channels.schema import Channel
 from agents.channels.web import WebAdapter
@@ -91,6 +90,6 @@ async def test_adapter_does_not_mask_content() -> None:
 async def test_received_by_us_at_is_recent() -> None:
     """The adapter stamps its own clock — must be UTC-aware + ~now."""
     msg = await WebAdapter().normalize(_raw())
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     age = abs((now - msg.received_by_us_at).total_seconds())
     assert age < 1.0  # within 1 second
