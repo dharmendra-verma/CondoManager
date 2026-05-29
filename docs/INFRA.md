@@ -53,7 +53,10 @@ infra/
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
 │       ├── app-insights.bicep                # Workspace-based App Insights, OTLP backend (CM-22)
 │       ├── workbook.bicep                    # Operations workbook over App Insights — cost/latency/errors/HITL (CM-25)
-│       └── workbook-payload.json             # Serialized workbook payload (4 KQL panels + time-range parameter) (CM-25)
+│       ├── workbook-payload.json             # Serialized workbook payload (4 KQL panels + time-range parameter) (CM-25)
+│       ├── action-group.bicep                # Shared Action Group (Slack + email receivers, conditional) (CM-26)
+│       ├── budget.bicep                      # Consumption Budget with 50/80/100% Actual thresholds (CM-26)
+│       └── alert-rules.bicep                 # 3 scheduled-query rules: latency SLO, guardrail trip, hallucination spike (CM-26)
 ├── docker/
 │   └── base/Dockerfile                       # Curated python:3.12-slim base image (CM-20)
 └── scripts/
