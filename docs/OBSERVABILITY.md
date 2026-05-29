@@ -203,12 +203,94 @@ heavily sampled.
   `--parameters appInsightsSamplingPercentage=100`. Live Metrics stays
   unsampled regardless.
 
+## LangSmith (dev only) — CM-23
+
+LangSmith is the **developer-facing** trace backend for prompt iteration
+and offline evals. Enabled by default on dev (Bicep param
+`langsmithEnabled` defaults to `env == 'dev'`); off on prod by default
+because CM-24 will wire Langfuse for prod LLM observations and running
+both would double-pay per call.
+
+| Env var | Set by | Effect |
+|---|---|---|
+| `LANGCHAIN_TRACING_V2` | Container App env block (`'true'`) | LangChain's native callback ships traces to LangSmith |
+| `LANGCHAIN_API_KEY` | KV `secretRef` → `langsmith-api-key` | API key minted in the LangSmith UI |
+| `LANGCHAIN_PROJECT` | `condomanager-<env>` (set in main.bicep) | Project routing in the LangSmith UI |
+| `LANGCHAIN_ENDPOINT` | Bicep param, default `https://api.smith.langchain.com` | US default; override to `eu.api.smith.langchain.com` for EU |
+
+### Dual emission with App Insights — by design
+
+In dev, the same LangChain call emits to **both** backends:
+
+| Pipeline | Layer hooked | Audience |
+|---|---|---|
+| Traceloop (CM-21) -> OTel -> App Insights (CM-22) | LangChain `Runnable` instrumentation | Ops view — latency / error / cost in App Insights workbooks (CM-25) |
+| LangChain native callback (CM-23) -> LangSmith | LangChain `BaseCallbackHandler` | Dev view — prompt iteration, trace replay, offline evals |
+
+The two pipelines hook **different** layers of LangChain — they don't fight
+over span ownership. Tested for non-interference in
+`tests/observability/test_langsmith.py::test_appi_branch_wins_when_langsmith_env_also_set`.
+
+**Cost note.** LangSmith Hobby includes 5K traces/mo; expect to stay well
+under in dev. Prod is intentionally off so the team doesn't double-pay
+for LLM observability — Langfuse owns prod (CM-24). If LangSmith
+ingestion ever becomes painful in dev, knob is the SDK env var
+`LANGCHAIN_TRACING_SAMPLING_RATE` (0.0-1.0).
+
+### Post-deploy one-time setup
+
+```bash
+# 1. Mint a LangSmith API key + create the project `condomanager-dev` in
+#    the LangSmith UI (auto-creates on first trace; explicit creation lets
+#    you set retention + sharing first).
+# 2. Populate the KV secret:
+az keyvault secret set --vault-name kv-condomanager-dev \
+    --name langsmith-api-key --value "<langsmith-key>"
+# 3. Force a Container App revision so it picks up the seeded secret:
+az containerapp update --name ca-hello-condomanager-dev --resource-group rg-condomanager
+# 4. Seed the eval dataset stub from tests/eval/triage_seed.jsonl:
+LANGCHAIN_API_KEY="<key>" \
+    python infra/scripts/seed-langsmith-dataset.py --env dev
+```
+
+Re-runs of the seed script are idempotent: it skips example uploads whose
+`inputs` fingerprint already exists in the dataset, and skips dataset
+creation if the dataset already exists.
+
+### Manual smoke test (AC #3)
+
+```bash
+LANGCHAIN_TRACING_V2=true \
+LANGCHAIN_API_KEY=<key> \
+LANGCHAIN_PROJECT=condomanager-dev \
+OPENAI_API_KEY=<openai-key> \
+python -m agents.observability.langchain_demo --message "kitchen sink is leaking"
+```
+
+The trace should appear in the LangSmith UI under `condomanager-dev`
+within ~30s. If env vars are missing or hold `REPLACE-ME`, the demo
+exits 1 with a clear notice — it never silently runs without producing a
+trace.
+
+### Eval dataset workflow (CM-30 prep)
+
+`tests/eval/triage_seed.jsonl` carries 10 stub examples covering the four
+target Triage intents (maintenance / inquiry / escalation / follow-up).
+CM-30 expands this to 200. The on-disk fixture is the source of truth:
+
+```bash
+# Edit the JSONL, then re-run the seed script.
+# Already-uploaded examples are skipped (fingerprint = JSON of `inputs`).
+python infra/scripts/seed-langsmith-dataset.py --env dev
+```
+
 ## What comes next (forward references)
 
-* **CM-23** turns on `LANGCHAIN_TRACING_V2` for LangSmith in dev.
 * **CM-24** ships Langfuse Cloud Hobby for production LLM observations.
 * **CM-25** builds Log Analytics workbooks over the spans flowing into
   App Insights from this story.
 * **CM-27** adds structured JSON logging that reads `get_request_id()` so
   log lines join spans by `request_id` in the App Insights query language.
 * **CM-28** is the first consumer of `langgraph_node_span`.
+* **CM-30** extends `tests/eval/triage_seed.jsonl` to 200 examples and
+  runs the Triage Agent eval against the LangSmith dataset seeded here.

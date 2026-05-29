@@ -1,0 +1,10 @@
+{"inputs": {"message": "Kitchen sink is leaking under the cabinet", "tenant_id": "t-001"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "There is water pouring out of the ceiling right NOW please help", "tenant_id": "t-002"}, "outputs": {"intent": "maintenance", "urgency": "emergency", "tone": "urgent"}}
+{"inputs": {"message": "When does the gym close on weekends?", "tenant_id": "t-003"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "I have been waiting THREE WEEKS for someone to fix my heater. This is unacceptable.", "tenant_id": "t-004"}, "outputs": {"intent": "escalation", "urgency": "high", "tone": "angry"}}
+{"inputs": {"message": "Following up on ticket #4521 - any update on the plumber?", "tenant_id": "t-005"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "Quick question - is the parking garage accessible 24/7?", "tenant_id": "t-006"}, "outputs": {"intent": "inquiry", "urgency": "low", "tone": "neutral"}}
+{"inputs": {"message": "The fire alarm in the hallway has been beeping for two hours", "tenant_id": "t-007"}, "outputs": {"intent": "maintenance", "urgency": "high", "tone": "frustrated"}}
+{"inputs": {"message": "Need to escalate this - third request for noise complaint follow-up", "tenant_id": "t-008"}, "outputs": {"intent": "escalation", "urgency": "medium", "tone": "frustrated"}}
+{"inputs": {"message": "My dishwasher won't drain - I'd like to schedule a visit", "tenant_id": "t-009"}, "outputs": {"intent": "maintenance", "urgency": "medium", "tone": "neutral"}}
+{"inputs": {"message": "Hi! Just wanted to confirm the elevator inspection is still on Friday", "tenant_id": "t-010"}, "outputs": {"intent": "follow-up", "urgency": "low", "tone": "neutral"}}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -35,6 +35,10 @@
 #      main.bicep wires it; compiled ARM contains Microsoft.Insights/components;
 #      keyvault.bicep secretNames includes app-insights-connection-string;
 #      container-app.bicep accepts appInsightsKvSecretUri; seed-app-insights-secret.sh exists.
+#  20. (CM-23) container-app.bicep accepts langsmithKvSecretUri + langsmithProjectName
+#      + langsmithEndpoint; declares all four LANGCHAIN_* env-var names;
+#      main.bicep wires langsmithEnabled (default dev-only) + the
+#      condomanager-<env> project name; seed-langsmith-dataset.py exists.
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/build.yml (lint-infra job)
@@ -636,6 +640,83 @@ if [ -s "$APPI_SEED" ]; then
   echo "   ✓ seed-app-insights-secret.sh present"
 else
   echo "   ✗ infra/scripts/seed-app-insights-secret.sh missing"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-23 — LangSmith tracing wiring
+# ---------------------------------------------------------------------------
+
+LS_SEED="$ROOT/infra/scripts/seed-langsmith-dataset.py"
+LS_FIXTURE="$ROOT/tests/eval/triage_seed.jsonl"
+
+echo "▶  Verifying container-app.bicep accepts the three LangSmith params"
+if grep -Eq "param[[:space:]]+langsmithKvSecretUri[[:space:]]+string" "$CA_BICEP" \
+   && grep -Eq "param[[:space:]]+langsmithProjectName[[:space:]]+string" "$CA_BICEP" \
+   && grep -Eq "param[[:space:]]+langsmithEndpoint[[:space:]]+string" "$CA_BICEP"; then
+  echo "   ✓ langsmithKvSecretUri + langsmithProjectName + langsmithEndpoint all present"
+else
+  echo "   ✗ container-app.bicep missing one or more LangSmith params"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep declares all four LANGCHAIN_* env vars"
+LANGCHAIN_VARS=("LANGCHAIN_API_KEY" "LANGCHAIN_TRACING_V2" "LANGCHAIN_PROJECT" "LANGCHAIN_ENDPOINT")
+for var in "${LANGCHAIN_VARS[@]}"; do
+  if grep -Fq "name: '$var'" "$CA_BICEP"; then
+    echo "   ✓ $var present"
+  else
+    echo "   ✗ $var MISSING from container-app.bicep"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying main.bicep wires langsmithEnabled with a dev-default"
+# Default must be `env == 'dev'` so prod opts in only when the operator overrides.
+if grep -Eq "param[[:space:]]+langsmithEnabled[[:space:]]+bool[[:space:]]*=[[:space:]]*env[[:space:]]*==[[:space:]]*'dev'" \
+   "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langsmithEnabled defaults to dev-only"
+else
+  echo "   ✗ langsmithEnabled param missing or default isn't 'env == dev'"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep uses the condomanager-\${env} LangSmith project pattern"
+if grep -Fq "var langsmithProject = 'condomanager-\${env}'" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langsmithProject naming pattern correct"
+else
+  echo "   ✗ main.bicep does NOT use the condomanager-\${env} project pattern"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep computes the langsmith-api-key KV URI"
+if grep -Fq "secrets/langsmith-api-key" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ KV URI for langsmith-api-key present"
+else
+  echo "   ✗ main.bicep doesn't compute the langsmith-api-key KV URI"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-langsmith-dataset.py exists"
+if [ -s "$LS_SEED" ]; then
+  echo "   ✓ seed-langsmith-dataset.py present"
+else
+  echo "   ✗ infra/scripts/seed-langsmith-dataset.py missing"
+  FAIL=1
+fi
+
+echo "▶  Verifying tests/eval/triage_seed.jsonl exists and is non-empty"
+if [ -s "$LS_FIXTURE" ]; then
+  # Sanity: count non-empty lines so an empty-file regression surfaces.
+  EXAMPLE_COUNT=$(grep -c . "$LS_FIXTURE" || true)
+  if [ "$EXAMPLE_COUNT" -ge 5 ]; then
+    echo "   ✓ triage_seed.jsonl present with $EXAMPLE_COUNT examples"
+  else
+    echo "   ✗ triage_seed.jsonl has only $EXAMPLE_COUNT examples (expected >=5)"
+    FAIL=1
+  fi
+else
+  echo "   ✗ tests/eval/triage_seed.jsonl missing"
   FAIL=1
 fi
 
