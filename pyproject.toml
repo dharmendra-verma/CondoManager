@@ -58,6 +58,13 @@ dependencies = [
   # + sampler wiring in one supported call. The `configure_azure_monitor`
   # `enable_live_metrics` and `sampler` kwargs are stable in 1.6+.
   "azure-monitor-opentelemetry>=1.6,<2",
+  # CM-23: LangChain ecosystem. `langchain` is the runtime; `langchain-openai`
+  # ships the ChatOpenAI integration used by the demo + future agents; the
+  # `langsmith` SDK provides the Client for dataset CRUD. `<1` caps the 0.x
+  # train; a 1.0 bump will need its own story.
+  "langchain>=0.3,<1",
+  "langchain-openai>=0.2,<1",
+  "langsmith>=0.1,<1",
 ]
 
 [project.optional-dependencies]
