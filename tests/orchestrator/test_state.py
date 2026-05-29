@@ -20,7 +20,10 @@ def test_defaults_for_unset_fields() -> None:
     s = AgentState(tenant_id="t-1", request_id="r-1")
     assert s.channel == Channel.UNKNOWN
     assert s.raw_message == ""
-    assert s.normalized == {}
+    # CM-29: `normalized` tightened from dict[str, Any] (default {}) to
+    # NormalizedMessage | None (default None). Channel adapters set it
+    # at the orchestrator entry — see agents/channels/web.py.
+    assert s.normalized is None
     assert s.intent is None
     assert s.urgency is None
     assert s.tone is None
