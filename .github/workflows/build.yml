@@ -50,6 +50,7 @@ jobs:
             python:
               - 'agents/**'
               - 'tests/observability/**'
+              - 'tests/orchestrator/**'
               - 'tests/__init__.py'
               - 'pyproject.toml'
               - 'requirements-lock.txt'

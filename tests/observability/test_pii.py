@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from agents.observability.pii import mask_pii
 
-
 # -----------------------------------------------------------------------
 # Each pattern, in isolation
 # -----------------------------------------------------------------------

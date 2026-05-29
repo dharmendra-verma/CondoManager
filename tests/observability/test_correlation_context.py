@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-
 from agents.observability import correlation
 
 

@@ -205,6 +205,36 @@ resource policiesVectorContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
   }
 }
 
+// CM-28: LangGraph spine checkpoint store. Each row is one BaseCheckpointSaver
+// checkpoint for a graph thread. Small docs, low fan-out, no vector indexing
+// — shared throughput is sufficient. 30-day TTL auto-purges old checkpoints
+// to keep storage bounded (longest HITL workflow expected to need history is
+// a few days; 30d is generous backstop).
+resource checkpointsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'checkpoints'
+  properties: {
+    resource: {
+      id: 'checkpoints'
+      partitionKey: {
+        // Partition by thread_id so all checkpoints for a single graph run
+        // colocate. LangGraph keys writes/reads by (thread_id, checkpoint_id),
+        // and read-most-recent is the hot path during HITL resume.
+        paths: [ '/thread_id' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+      // 30 days = 2,592,000 seconds. Auto-purge on every doc; container-level
+      // default so producers don't have to set it per-write.
+      defaultTtl: 2592000
+    }
+  }
+}
+
 output accountName string = account.name
 output accountId string = account.id
 output endpoint string = account.properties.documentEndpoint
