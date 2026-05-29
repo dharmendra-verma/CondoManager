@@ -5,8 +5,9 @@
 This is the orchestrator: a `StateGraph(AgentState)` with nodes for triage,
 knowledge, maintenance, escalation, HITL review, and a guardrail-terminated
 terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one at a time without
-touching the spine. **`maintenance` is now real (CM-31)** — see §8; `triage`,
-`knowledge`, and `escalation` remain stubs until their stories land.
+touching the spine. **`triage` (CM-30, see §3) and `maintenance` (CM-31, see
+§8) are now real**; `knowledge` and `escalation` remain stubs until their
+stories land.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
