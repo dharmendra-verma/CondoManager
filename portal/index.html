@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>CondoManager — Ticket Status</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>Track your request</h1>
+      <p class="lede">Enter the confirmation code from your message (e.g. TKT-3F8A2C9D).</p>
+      <form id="lookup-form" novalidate>
+        <label for="code" class="sr-only">Confirmation code</label>
+        <input
+          id="code"
+          name="code"
+          type="text"
+          inputmode="latin"
+          autocomplete="off"
+          placeholder="TKT-XXXXXXXX"
+          aria-describedby="error"
+          required
+        />
+        <button type="submit">Check status</button>
+      </form>
+      <p id="error" class="error" role="alert" hidden></p>
+      <section id="result" class="result" hidden aria-live="polite"></section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
