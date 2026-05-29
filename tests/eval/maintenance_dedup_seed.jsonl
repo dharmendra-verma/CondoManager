@@ -1,0 +1,22 @@
+{"existing": {"unit": "4b", "issue": "kitchen sink leaking under cabinet", "created_days_ago": 2}, "candidate": {"unit": "4b", "issue": "the sink in my kitchen is leaking"}, "is_duplicate": true}
+{"existing": {"unit": "7a", "issue": "no hot water in the shower", "created_days_ago": 1}, "candidate": {"unit": "7a", "issue": "shower has no hot water"}, "is_duplicate": true}
+{"existing": {"unit": "12", "issue": "power outlet in bedroom not working", "created_days_ago": 3}, "candidate": {"unit": "12", "issue": "bedroom outlet has no power"}, "is_duplicate": true}
+{"existing": {"unit": "3c", "issue": "the heater is not working", "created_days_ago": 4}, "candidate": {"unit": "3c", "issue": "heater not working at all"}, "is_duplicate": true}
+{"existing": {"unit": "9", "issue": "dishwasher is leaking water", "created_days_ago": 2}, "candidate": {"unit": "9", "issue": "water leaking from the dishwasher"}, "is_duplicate": true}
+{"existing": {"unit": "22", "issue": "bathroom toilet keeps clogging", "created_days_ago": 5}, "candidate": {"unit": "22", "issue": "toilet clogged again in bathroom"}, "is_duplicate": true}
+{"existing": {"unit": "1a", "issue": "front door lock is broken", "created_days_ago": 1}, "candidate": {"unit": "1a", "issue": "broken lock on the front door"}, "is_duplicate": true}
+{"existing": {"unit": "5", "issue": "ac not cooling the apartment", "created_days_ago": 3}, "candidate": {"unit": "5", "issue": "air conditioning is not cooling"}, "is_duplicate": true}
+{"existing": {"unit": "8b", "issue": "kitchen light not turning on", "created_days_ago": 2}, "candidate": {"unit": "8b", "issue": "the light in the kitchen wont turn on"}, "is_duplicate": true}
+{"existing": {"unit": "14", "issue": "water heater leaking in basement", "created_days_ago": 4}, "candidate": {"unit": "14", "issue": "leak from the water heater"}, "is_duplicate": true}
+{"existing": {"unit": "4b", "issue": "kitchen sink leaking under cabinet", "created_days_ago": 2}, "candidate": {"unit": "5c", "issue": "the sink in my kitchen is leaking"}, "is_duplicate": false}
+{"existing": {"unit": "7a", "issue": "no hot water in the shower", "created_days_ago": 10}, "candidate": {"unit": "7a", "issue": "shower has no hot water"}, "is_duplicate": false}
+{"existing": {"unit": "12", "issue": "power outlet not working", "created_days_ago": 1}, "candidate": {"unit": "12", "issue": "kitchen sink leaking"}, "is_duplicate": false}
+{"existing": {"unit": "22", "issue": "toilet keeps clogging", "created_days_ago": 2}, "candidate": {"unit": "22", "issue": "kitchen sink is leaking"}, "is_duplicate": false}
+{"existing": {"unit": "5", "issue": "heater not working", "created_days_ago": 1}, "candidate": {"unit": "5", "issue": "ac not cooling"}, "is_duplicate": false}
+{"existing": {"unit": "9", "issue": "dishwasher is leaking", "created_days_ago": 1}, "candidate": {"unit": "unknown", "issue": "the dishwasher is leaking"}, "is_duplicate": false}
+{"existing": {"unit": "unknown", "issue": "sink leaking somewhere", "created_days_ago": 1}, "candidate": {"unit": "4b", "issue": "sink leaking somewhere"}, "is_duplicate": false}
+{"existing": {"unit": "8b", "issue": "kitchen light not working", "created_days_ago": 2}, "candidate": {"unit": "8b", "issue": "bedroom outlet sparking"}, "is_duplicate": false}
+{"existing": {"unit": "1a", "issue": "bathroom sink leaking", "created_days_ago": 1}, "candidate": {"unit": "2b", "issue": "bathroom sink leaking"}, "is_duplicate": false}
+{"existing": {"unit": "14", "issue": "front door lock broken", "created_days_ago": 1}, "candidate": {"unit": "14", "issue": "water heater leaking"}, "is_duplicate": false}
+{"existing": {"unit": "3c", "issue": "something feels off in the apartment", "created_days_ago": 1}, "candidate": {"unit": "3c", "issue": "general noise complaint upstairs"}, "is_duplicate": false}
+{"existing": {"unit": "4b", "issue": "kitchen sink leaking", "created_days_ago": 8}, "candidate": {"unit": "4b", "issue": "kitchen sink leaking"}, "is_duplicate": false}
