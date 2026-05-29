@@ -53,6 +53,11 @@ dependencies = [
   "openinference-instrumentation-openai>=0.1,<1",
   # Traceloop SDK — for LangChain / LangGraph high-level chain tracing.
   "traceloop-sdk>=0.30,<1",
+  # CM-22: Microsoft's Azure Monitor OTel distro. configure_otel() delegates
+  # here when APPLICATIONINSIGHTS_CONNECTION_STRING is set — gets Live Metrics
+  # + sampler wiring in one supported call. The `configure_azure_monitor`
+  # `enable_live_metrics` and `sampler` kwargs are stable in 1.6+.
+  "azure-monitor-opentelemetry>=1.6,<2",
 ]
 
 [project.optional-dependencies]

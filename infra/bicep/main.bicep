@@ -1,6 +1,7 @@
 // main.bicep — entry point for resources deployed INTO rg-condomanager.
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
 //       CM-18 (Key Vault + User-Assigned MI)  | CM-20 (ACR + base image)
+//       CM-22 (Application Insights as OTLP backend)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -37,6 +38,11 @@ param cosmosEnableFreeTier bool = true
 @maxValue(4096)
 param cosmosVectorDimensions int = 1536
 
+@description('Server-side adaptive sampling percentage on the Application Insights resource (CM-22). 100 = no drop; lower values reduce ingestion cost. Dev defaults to 100, prod to 50; tune per env without code change.')
+@minValue(0)
+@maxValue(100)
+param appInsightsSamplingPercentage int = env == 'dev' ? 100 : 50
+
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
   name: 'tags-${env}'
@@ -63,6 +69,22 @@ module logAnalytics './modules/log-analytics.bicep' = {
     env: env
     location: location
     tags: tagsModule.outputs.tags
+  }
+}
+
+// Application Insights (workspace-based) — OTLP backend for OTel spans. (CM-22)
+// Linked to the LAW above; the Python side (configure_otel) routes spans here
+// when APPLICATIONINSIGHTS_CONNECTION_STRING is set on the workload. The
+// connection string is surfaced from main as a @secure output; the post-deploy
+// `seed-app-insights-secret.sh` populates the KV secret from that output.
+module appInsights './modules/app-insights.bicep' = {
+  name: 'appi-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId
+    samplingPercentage: appInsightsSamplingPercentage
   }
 }
 
@@ -103,9 +125,18 @@ module keyvault './modules/keyvault.bicep' = {
   }
 }
 
+// KV secret URI for APPLICATIONINSIGHTS_CONNECTION_STRING — Container Apps'
+// native secretRef integration resolves this through the MI at revision start.
+// `vaultUri` ends with `/`, so the concatenation produces the canonical
+// `https://<kv-name>.vault.azure.net/secrets/<secret-name>` form.
+var appInsightsKvSecretUri = '${keyvault.outputs.vaultUri}secrets/app-insights-connection-string'
+
 // Hello-world Container App — smoke-test surface for CM-16 AC.
 // CM-18: attaches the shared User-Assigned MI so the app can read KV secrets
 // via DefaultAzureCredential once placeholder values are populated.
+// CM-22: mounts the App Insights connection string from KV as an env var so
+// configure_otel() switches to the Azure Monitor exporter automatically once
+// the post-deploy seed step replaces the REPLACE-ME placeholder.
 module containerApp './modules/container-app.bicep' = {
   name: 'ca-hello-${env}'
   params: {
@@ -114,6 +145,7 @@ module containerApp './modules/container-app.bicep' = {
     tags: tagsModule.outputs.tags
     environmentId: containerAppsEnv.outputs.environmentId
     userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsKvSecretUri: appInsightsKvSecretUri
   }
 }
 
@@ -172,3 +204,12 @@ output keyVaultUri string = keyvault.outputs.vaultUri
 // CM-20 outputs — used by .github/workflows/base-image.yml + future app stories.
 output acrName string = acr.outputs.acrName
 output acrLoginServer string = acr.outputs.loginServer
+
+// CM-22 outputs — App Insights name + ID for tooling discovery, and the
+// connection string for the post-deploy `seed-app-insights-secret.sh` to
+// write into KV. @secure() keeps the conn string out of deployment-history
+// plaintext (it carries an InstrumentationKey which is functionally a token).
+output appInsightsName string = appInsights.outputs.appInsightsName
+output appInsightsId string = appInsights.outputs.appInsightsId
+@secure()
+output appInsightsConnectionString string = appInsights.outputs.connectionString

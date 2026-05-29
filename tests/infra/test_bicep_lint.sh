@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -30,6 +30,11 @@
 #      Microsoft.ContainerRegistry/registries; base Dockerfile pins
 #      python:3.12-slim + runs apt upgrade; base-image.yml references
 #      Trivy + az acr login + docker push; acr-prune.sh exists.
+#  19. (CM-22) app-insights.bicep uses workspace-based mode (Flow_Type
+#      Bluefield + IngestionMode LogAnalytics + WorkspaceResourceId);
+#      main.bicep wires it; compiled ARM contains Microsoft.Insights/components;
+#      keyvault.bicep secretNames includes app-insights-connection-string;
+#      container-app.bicep accepts appInsightsKvSecretUri; seed-app-insights-secret.sh exists.
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/build.yml (lint-infra job)
@@ -86,7 +91,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -109,7 +114,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -535,6 +540,102 @@ if [ -s "$PRUNE_SH" ]; then
   echo "   ✓ acr-prune.sh present"
 else
   echo "   ✗ infra/scripts/acr-prune.sh missing — no retention policy in place"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-22 — Application Insights as OTLP backend
+# ---------------------------------------------------------------------------
+
+APPI_BICEP="$MODULES_DIR/app-insights.bicep"
+CA_BICEP="$MODULES_DIR/container-app.bicep"
+APPI_SEED="$ROOT/infra/scripts/seed-app-insights-secret.sh"
+
+echo "▶  Verifying app-insights.bicep uses workspace-based mode (AC #1)"
+# All three together = workspace-based; classic mode lacks Flow_Type=Bluefield + IngestionMode=LogAnalytics.
+if grep -Fq "Flow_Type: 'Bluefield'" "$APPI_BICEP" \
+   && grep -Fq "IngestionMode: 'LogAnalytics'" "$APPI_BICEP" \
+   && grep -Fq "WorkspaceResourceId: logAnalyticsWorkspaceId" "$APPI_BICEP"; then
+  echo "   ✓ workspace-based mode wired (Bluefield + LogAnalytics ingestion + WorkspaceResourceId)"
+else
+  echo "   ✗ app-insights.bicep is NOT workspace-based — classic App Insights is deprecated"
+  FAIL=1
+fi
+
+echo "▶  Verifying app-insights.bicep accepts a samplingPercentage param (AC #3)"
+if grep -Eq "param samplingPercentage int" "$APPI_BICEP" \
+   && grep -Fq "SamplingPercentage: samplingPercentage" "$APPI_BICEP"; then
+  echo "   ✓ samplingPercentage param wired into SamplingPercentage property"
+else
+  echo "   ✗ samplingPercentage param NOT wired — server-side adaptive sampling unavailable"
+  FAIL=1
+fi
+
+echo "▶  Verifying app-insights.bicep emits a @secure connectionString output"
+# `@secure()` on a string output is the supported syntax for keeping the conn
+# string out of deployment-history plaintext.
+if grep -E -A1 "^@secure\(\)" "$APPI_BICEP" | grep -Fq "output connectionString string"; then
+  echo "   ✓ connectionString output is @secure"
+else
+  echo "   ✗ connectionString output is NOT @secure — would expose the InstrumentationKey in deployment history"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the app-insights module"
+if grep -Fq "modules/app-insights.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ app-insights module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/app-insights.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep links App Insights to the existing LAW (CM-16)"
+if grep -Fq "logAnalyticsWorkspaceId: logAnalytics.outputs.workspaceId" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ App Insights linked to logAnalytics.outputs.workspaceId"
+else
+  echo "   ✗ main.bicep does NOT pass the LAW workspace ID to App Insights"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains Microsoft.Insights/components"
+if grep -Fq "Microsoft.Insights/components" /tmp/main.json; then
+  echo "   ✓ Microsoft.Insights/components present in compiled ARM"
+else
+  echo "   ✗ Microsoft.Insights/components MISSING from compiled ARM"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep accepts appInsightsKvSecretUri param"
+if grep -Eq "param[[:space:]]+appInsightsKvSecretUri[[:space:]]+string" "$CA_BICEP"; then
+  echo "   ✓ appInsightsKvSecretUri param present on container-app.bicep"
+else
+  echo "   ✗ appInsightsKvSecretUri param MISSING — Container App cannot mount the conn string from KV"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep mounts APPLICATIONINSIGHTS_CONNECTION_STRING via secretRef"
+# The platform mounts a KV secret by name + secretRef in env. Both must coexist.
+if grep -Fq "name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'" "$CA_BICEP" \
+   && grep -Fq "secretRef: 'appinsights-conn'" "$CA_BICEP"; then
+  echo "   ✓ APPLICATIONINSIGHTS_CONNECTION_STRING wired via secretRef"
+else
+  echo "   ✗ container-app.bicep does NOT mount APPLICATIONINSIGHTS_CONNECTION_STRING via secretRef"
+  FAIL=1
+fi
+
+echo "▶  Verifying keyvault.bicep includes app-insights-connection-string in secretNames"
+if grep -Fq "'app-insights-connection-string'" "$KV"; then
+  echo "   ✓ app-insights-connection-string declared in secretNames"
+else
+  echo "   ✗ app-insights-connection-string MISSING from keyvault.bicep secretNames default"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-app-insights-secret.sh exists"
+if [ -s "$APPI_SEED" ]; then
+  echo "   ✓ seed-app-insights-secret.sh present"
+else
+  echo "   ✗ infra/scripts/seed-app-insights-secret.sh missing"
   FAIL=1
 fi
 

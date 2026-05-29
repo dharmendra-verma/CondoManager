@@ -55,6 +55,7 @@ SECRETS=(
   langfuse-public-key
   langfuse-secret-key
   cosmos-connection-string
+  app-insights-connection-string
 )
 
 PLACEHOLDER="REPLACE-ME"

@@ -76,3 +76,23 @@ def test_otlp_falls_back_to_console_when_endpoint_missing(
     from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
     assert isinstance(exporter, ConsoleSpanExporter)
+
+
+def test_otlp_chosen_when_no_app_insights(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for CM-22 precedence ordering.
+
+    Without ``APPLICATIONINSIGHTS_CONNECTION_STRING``, ``OTEL_TRACES_EXPORTER=otlp``
+    + endpoint must still pick the OTLP path. (Precedence: App Insights > OTLP > console;
+    this test guards the OTLP -> console boundary, the test_azure_monitor suite
+    guards the App Insights -> OTLP boundary.)
+    """
+    monkeypatch.delenv("APPLICATIONINSIGHTS_CONNECTION_STRING", raising=False)
+    monkeypatch.setenv("OTEL_TRACES_EXPORTER", "otlp")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318")
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+        OTLPSpanExporter,
+    )
+
+    assert isinstance(sdk._select_exporter(), OTLPSpanExporter)
