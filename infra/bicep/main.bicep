@@ -281,6 +281,23 @@ module functions './modules/functions.bicep' = {
   }
 }
 
+// CM-36 — weekly Analytics & Forecasting digest job (Azure Functions Timer).
+// Dedicated Linux Consumption Function App (separate from gdrive-sync) so the
+// weekly schedule + failures are isolated. Reads tickets + escalations from
+// Cosmos via the shared MI; posts the digest to the slack-webhook-url KV ref.
+module analytics './modules/analytics.bicep' = {
+  name: 'analytics-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+    keyVaultUri: keyvault.outputs.vaultUri
+  }
+}
+
 // Azure Container Registry (Basic SKU) — destination for the curated Python
 // base image built by .github/workflows/base-image.yml. (CM-20)
 // The hello-world Container App still pulls from MCR; ACR's first consumers
@@ -361,3 +378,7 @@ output langsmithEnabled bool = langsmithEnabled
 output functionAppName string = functions.outputs.functionAppName
 output functionAppId string = functions.outputs.functionAppId
 output functionAppDefaultHostName string = functions.outputs.functionAppDefaultHostName
+
+// CM-36 — analytics digest Function App (used by the deploy step + smoke test).
+output analyticsFunctionAppName string = analytics.outputs.functionAppName
+output analyticsFunctionAppId string = analytics.outputs.functionAppId
