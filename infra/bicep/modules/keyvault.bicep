@@ -48,6 +48,10 @@ param secretNames array = [
   // via secretRef. seed-app-insights-secret.sh populates it from the deployment
   // output post-deploy; until then it sits as the CM-18 REPLACE-ME placeholder.
   'app-insights-connection-string'
+  // CM-34: Google service-account JSON key for the Drive → Cosmos sync job.
+  // The gdrive-sync Function App reads it via a Key Vault reference; operators
+  // paste the SA key out-of-band (see docs/INFRA.md). Placeholder until then.
+  'google-drive-sa-key'
 ]
 
 var vaultName = 'kv-condomanager-${env}'

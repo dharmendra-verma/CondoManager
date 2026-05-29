@@ -235,6 +235,30 @@ resource checkpointsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   }
 }
 
+// CM-34: knowledge-sync cursor store for the Google Drive → Cosmos sync job.
+// One small doc per sync source (id == source), holding the Drive Changes-API
+// startPageToken + a per-document content-hash map for delta detection. Tiny,
+// low-fan-out, no vector indexing — shared database throughput is sufficient.
+// Partitioned by /source so each source's cursor is a single point-read.
+resource knowledgeSyncContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'knowledge_sync'
+  properties: {
+    resource: {
+      id: 'knowledge_sync'
+      partitionKey: {
+        paths: [ '/source' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+    }
+  }
+}
+
 output accountName string = account.name
 output accountId string = account.id
 output endpoint string = account.properties.documentEndpoint

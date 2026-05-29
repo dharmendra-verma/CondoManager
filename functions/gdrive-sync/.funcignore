@@ -1,0 +1,9 @@
+.git*
+.venv
+__pycache__
+*.pyc
+local.settings.json
+tests
+.vscode
+# The `agents/` package is copied in at package time by the deploy step
+# (see docs/INFRA.md) — exclude dev-only artifacts but keep agents/.
