@@ -281,6 +281,22 @@ module functions './modules/functions.bicep' = {
   }
 }
 
+// CM-36 — weekly analytics digest job (Azure Functions Timer). A separate
+// Consumption Function App reading the CM-31 tickets container via the shared
+// MI; no API keys needed (logging delivery today). Real email/portal delivery
+// is deferred to a follow-up + CM-37.
+module analyticsFunctions './modules/analytics-functions.bicep' = {
+  name: 'analytics-functions-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+  }
+}
+
 // Azure Container Registry (Basic SKU) — destination for the curated Python
 // base image built by .github/workflows/base-image.yml. (CM-20)
 // The hello-world Container App still pulls from MCR; ACR's first consumers
@@ -361,3 +377,7 @@ output langsmithEnabled bool = langsmithEnabled
 output functionAppName string = functions.outputs.functionAppName
 output functionAppId string = functions.outputs.functionAppId
 output functionAppDefaultHostName string = functions.outputs.functionAppDefaultHostName
+
+// CM-36 outputs — analytics digest Function App identity for `func publish`.
+output analyticsFunctionAppName string = analyticsFunctions.outputs.functionAppName
+output analyticsFunctionAppId string = analyticsFunctions.outputs.functionAppId
