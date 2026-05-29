@@ -2,7 +2,7 @@
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
 //       CM-18 (Key Vault + User-Assigned MI)  | CM-20 (ACR + base image)
 //       CM-22 (Application Insights as OTLP backend)  | CM-23 (LangSmith tracing)
-//       CM-25 (Operations workbook over App Insights)
+//       CM-25 (Operations workbook over App Insights)  | CM-26 (Action Group + Budget + Alert rules)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -49,6 +49,21 @@ param langsmithEnabled bool = env == 'dev'
 
 @description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU customers.')
 param langsmithEndpoint string = 'https://api.smith.langchain.com'
+
+@description('Monthly Azure spend budget in USD for the resource group (CM-26). Triggers alerts at 50/80/100% Actual. Dev defaults to 100, prod to 500 — operator tunes after the first month of real usage data lands.')
+@minValue(1)
+param alertMonthlyBudgetUsd int = env == 'dev' ? 100 : 500
+
+@description('Slack incoming webhook URL for the Action Group webhook receiver (CM-26). Empty string omits the webhook entirely; operator fills via `--parameters alertSlackWebhookUrl=...` at deploy time OR Azure Portal post-deploy. @secure() keeps the URL out of deployment-history plaintext.')
+@secure()
+param alertSlackWebhookUrl string = ''
+
+@description('Email recipient for the Action Group email receiver (CM-26). Empty string omits the email entirely. Plain string (not @secure) since email addresses are not credentials.')
+param alertEmail string = ''
+
+@description('Minimum LLM call count in the 1h window before the hallucination-spike alert can fire (CM-26). Default 10 catches the "zero traffic = zero refusal = panic" false positive in phase 0; raise once steady-state prod LLM traffic is known.')
+@minValue(1)
+param hallucinationSpikeMinCalls int = 10
 
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
@@ -105,6 +120,48 @@ module workbook './modules/workbook.bicep' = {
     location: location
     tags: tagsModule.outputs.tags
     appInsightsId: appInsights.outputs.appInsightsId
+  }
+}
+
+// CM-26 — One shared Action Group fed by the Budget thresholds and all
+// three scheduled-query alert rules. Email + Slack receivers are
+// conditional on operator-supplied params; empty deploy is legal
+// (alerts fire, page nobody, sit in the Azure Monitor "fired" list).
+module actionGroup './modules/action-group.bicep' = {
+  name: 'ag-${env}'
+  params: {
+    env: env
+    tags: tagsModule.outputs.tags
+    emailAddress: alertEmail
+    slackWebhookUrl: alertSlackWebhookUrl
+  }
+}
+
+// CM-26 — Azure Consumption Budget with 50/80/100% Actual thresholds.
+// RG-scoped because no Microsoft.CognitiveServices/accounts (Azure
+// OpenAI) resource exists yet; when CM-OpenAI lands OpenAI dominates
+// RG spend and the operator can tighten the filter to that resource.
+module budget './modules/budget.bicep' = {
+  name: 'budget-${env}'
+  params: {
+    env: env
+    actionGroupId: actionGroup.outputs.actionGroupId
+    monthlyAmountUsd: alertMonthlyBudgetUsd
+  }
+}
+
+// CM-26 — Three scheduled-query alert rules over App Insights:
+// latency SLO breach (p95 > 2s), guardrail trip (cost or loop cap),
+// hallucination spike (refusal-rate floor with traffic gate).
+module alertRules './modules/alert-rules.bicep' = {
+  name: 'alerts-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    appInsightsId: appInsights.outputs.appInsightsId
+    actionGroupId: actionGroup.outputs.actionGroupId
+    hallucinationSpikeMinCalls: hallucinationSpikeMinCalls
   }
 }
 
@@ -249,6 +306,18 @@ output appInsightsConnectionString string = appInsights.outputs.connectionString
 // + tooling discovery (the deep-link to the workbook builds from the ID).
 output workbookId string = workbook.outputs.workbookId
 output workbookName string = workbook.outputs.workbookName
+
+// CM-26 outputs — Action Group + budget + alert rule names. Surface
+// the rule names as an object so tooling (Azure Portal deep-links,
+// future SDK probes) can discover them without depending on the naming
+// convention.
+output actionGroupId string = actionGroup.outputs.actionGroupId
+output budgetName string = budget.outputs.budgetName
+output alertRuleNames object = {
+  latencySlo: alertRules.outputs.latencySloRuleName
+  guardrailTrip: alertRules.outputs.guardrailTripRuleName
+  hallucinationSpike: alertRules.outputs.hallucinationSpikeRuleName
+}
 
 // CM-23 outputs — empty string when LangSmith is disabled, lets tooling
 // (e.g. seed-langsmith-dataset.py) discover the project name without

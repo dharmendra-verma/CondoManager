@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23 + CM-25
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23 + CM-25 + CM-26
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -44,6 +44,14 @@
 #      workbook-payload.json parses cleanly and contains all four AC
 #      panel keywords (cost/latency/error/hitl) + the gen_ai.* namespace
 #      (regression for the openinference/gen_ai semconv coalesce).
+#  22. (CM-26) action-group.bicep + budget.bicep + alert-rules.bicep all
+#      compile; main.bicep wires all three; ARM contains
+#      Microsoft.Insights/actionGroups, Microsoft.Consumption/budgets,
+#      Microsoft.Insights/scheduledQueryRules; budget declares 50/80/100%
+#      thresholds; alert-rules references guardrail.cost_cap /
+#      guardrail.loop_cap / llm.refused customEvents (the contracts CM-28+
+#      emits); useCommonAlertSchema regression on Action Group receivers;
+#      @secure() regression on the slack webhook URL param in main.bicep.
 #
 # Run locally:  bash tests/infra/test_bicep_lint.sh
 # Run in CI:    invoked by .github/workflows/build.yml (lint-infra job)
@@ -100,7 +108,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -123,7 +131,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -804,6 +812,94 @@ else
   echo "   ✗ workbook.bicep does NOT use guid() for the resource name — redeploys may produce duplicates or fail"
   FAIL=1
 fi
+
+# ---------------------------------------------------------------------------
+# CM-26 — Azure Monitor alerts (Action Group + Budget + 3 query rules)
+# ---------------------------------------------------------------------------
+
+AG_BICEP="$MODULES_DIR/action-group.bicep"
+BUDGET_BICEP="$MODULES_DIR/budget.bicep"
+ALERTS_BICEP="$MODULES_DIR/alert-rules.bicep"
+
+echo "▶  Verifying main.bicep wires the action-group, budget, and alert-rules modules"
+for m in action-group budget alert-rules; do
+  if grep -Fq "modules/$m.bicep" "$BICEP_DIR/main.bicep"; then
+    echo "   ✓ $m module referenced"
+  else
+    echo "   ✗ main.bicep does NOT reference modules/$m.bicep"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying compiled ARM contains the three CM-26 resource types"
+# actionGroups + budgets + scheduledQueryRules together = a complete alerts pipeline.
+for t in "Microsoft.Insights/actionGroups" "Microsoft.Consumption/budgets" "Microsoft.Insights/scheduledQueryRules"; do
+  if grep -Fq "$t" /tmp/main.json; then
+    echo "   ✓ $t present in compiled ARM"
+  else
+    echo "   ✗ $t MISSING from compiled ARM"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying budget.bicep declares all three threshold percentages (AC #1)"
+for pct in 50 80 100; do
+  # Match `threshold: 50` with optional whitespace + word boundary so 50
+  # doesn't accidentally match e.g. "500" if someone bumps the budget amount.
+  if grep -Eq "threshold:[[:space:]]+${pct}\$" "$BUDGET_BICEP"; then
+    echo "   ✓ budget threshold ${pct}% declared"
+  else
+    echo "   ✗ budget.bicep MISSING threshold: ${pct}"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying alert-rules.bicep references the expected customEvents contracts (ACs #3 #4)"
+# CM-28 will emit guardrail.cost_cap / guardrail.loop_cap; CM-30 will emit
+# llm.refused. Forgetting any one means the corresponding alert silently
+# never fires when the producer story lands.
+for evt in "guardrail.cost_cap" "guardrail.loop_cap" "llm.refused"; do
+  if grep -Fq "$evt" "$ALERTS_BICEP"; then
+    echo "   ✓ event contract '$evt' wired into alert KQL"
+  else
+    echo "   ✗ alert-rules.bicep does NOT reference '$evt' — alert won't fire when the future story emits it"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying action-group.bicep uses common alert schema (consistent receiver payload)"
+# useCommonAlertSchema: true normalises the JSON shape across all receivers
+# so operators write one Slack formatter once. The Bicep default is false.
+if grep -Eq "useCommonAlertSchema:[[:space:]]+true" "$AG_BICEP"; then
+  echo "   ✓ useCommonAlertSchema: true (consistent payload across all receivers)"
+else
+  echo "   ✗ action-group.bicep does NOT enable useCommonAlertSchema — receivers will get inconsistent JSON"
+  FAIL=1
+fi
+
+echo "▶  Verifying alertSlackWebhookUrl is @secure() in main.bicep (regression)"
+# Webhook URLs are auth tokens — anyone with one can post to your Slack.
+# A plain param would leak into deployment-history plaintext.
+# Use awk to find the line preceding the param declaration, since `grep -B1`
+# behaves inconsistently across grep versions on Git Bash.
+SECURE_LINE=$(awk '/^@secure\(\)/ {prev="@secure()"; next} {if (prev=="@secure()" && /param[[:space:]]+alertSlackWebhookUrl/) print "OK"; prev=""}' "$BICEP_DIR/main.bicep")
+if [ "$SECURE_LINE" = "OK" ]; then
+  echo "   ✓ alertSlackWebhookUrl declared @secure()"
+else
+  echo "   ✗ alertSlackWebhookUrl is NOT @secure() — webhook URL would leak into deployment history"
+  FAIL=1
+fi
+
+echo "▶  Verifying alert-rules.bicep declares all three rule names"
+# Each AC maps to one of these — losing one means an AC is silently unmet.
+for rule in "alert-latency-slo" "alert-guardrail-trip" "alert-hallucination-spike"; do
+  if grep -Fq "$rule" "$ALERTS_BICEP"; then
+    echo "   ✓ rule '$rule' declared"
+  else
+    echo "   ✗ rule '$rule' MISSING from alert-rules.bicep"
+    FAIL=1
+  fi
+done
 
 if [ $FAIL -ne 0 ]; then
   echo ""
