@@ -26,12 +26,20 @@ from typing import Any
 from .correlation import (
     REQUEST_ID_KEY,
     UNKNOWN_REQUEST_ID,
+    get_agent_name,
     get_request_id,
+    get_tenant_id,
     new_request_id,
+    set_agent_name,
     set_request_id,
+    set_tenant_id,
+    with_agent,
     with_request_id,
+    with_tenant,
 )
 from .instrumentation import register_auto_instrumentation
+from .logging import configure_logging
+from .pii import mask_pii
 from .sdk import setup_tracer_provider
 from .spans import TRACER_NAME, langgraph_node_span
 
@@ -39,14 +47,22 @@ __all__ = [
     "REQUEST_ID_KEY",
     "TRACER_NAME",
     "UNKNOWN_REQUEST_ID",
+    "configure_logging",
     "configure_otel",
+    "get_agent_name",
     "get_request_id",
+    "get_tenant_id",
     "langgraph_node_span",
+    "mask_pii",
     "new_request_id",
     "register_auto_instrumentation",
+    "set_agent_name",
     "set_request_id",
+    "set_tenant_id",
     "setup_tracer_provider",
+    "with_agent",
     "with_request_id",
+    "with_tenant",
 ]
 
 
