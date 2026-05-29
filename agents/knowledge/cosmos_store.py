@@ -95,6 +95,68 @@ class CosmosVectorStore:
         """Delete all chunks for ``doc_id`` (doc removed / emptied)."""
         return self._delete_where(tenant_id, doc_id, min_index=0)
 
+    # ---- vector + keyword search (CM-33 read path) -----------------------
+
+    def search_chunks(
+        self, tenant_id: str, embedding: list[float], *, top_k: int = 5
+    ) -> list[tuple[VectorChunk, float]]:
+        """Vector-similarity search via the DiskANN ``VectorDistance()`` index.
+
+        Returns up to ``top_k`` ``(chunk, distance)`` pairs nearest to
+        ``embedding``, ascending by distance (nearest first), scoped to the
+        tenant partition. ``top_k`` is interpolated as an int (Cosmos ``TOP``
+        does not accept a bound parameter) — it is code-supplied, never user
+        input, so this is not an injection vector.
+        """
+        query = (
+            f"SELECT TOP {int(top_k)} c AS chunk, "
+            "VectorDistance(c.embedding, @qv) AS _distance "
+            "FROM c WHERE c.tenantId = @t "
+            "ORDER BY VectorDistance(c.embedding, @qv)"
+        )
+        params: list[dict[str, object]] = [
+            {"name": "@qv", "value": embedding},
+            {"name": "@t", "value": tenant_id},
+        ]
+        rows = list(
+            self._vector.query_items(
+                query=query, parameters=params, partition_key=tenant_id
+            )
+        )
+        return [
+            (VectorChunk.model_validate(row["chunk"]), float(row["_distance"]))
+            for row in rows
+        ]
+
+    def keyword_search(
+        self, tenant_id: str, terms: list[str], *, top_k: int = 5
+    ) -> list[VectorChunk]:
+        """Case-insensitive keyword search over chunk text (``CONTAINS``).
+
+        OR-matches any of ``terms`` against ``LOWER(c.text)``; empty ``terms``
+        returns nothing. Substring matching is coarse but cheap — it is the
+        lexical half of hybrid retrieval that RRF fuses with the vector hits,
+        not a standalone ranker.
+        """
+        if not terms:
+            return []
+        params: list[dict[str, object]] = [{"name": "@t", "value": tenant_id}]
+        clauses: list[str] = []
+        for i, term in enumerate(terms):
+            name = f"@kw{i}"
+            clauses.append(f"CONTAINS(LOWER(c.text), {name})")
+            params.append({"name": name, "value": term.lower()})
+        query = (
+            f"SELECT TOP {int(top_k)} c AS chunk FROM c "
+            f"WHERE c.tenantId = @t AND ({' OR '.join(clauses)})"
+        )
+        rows = list(
+            self._vector.query_items(
+                query=query, parameters=params, partition_key=tenant_id
+            )
+        )
+        return [VectorChunk.model_validate(row["chunk"]) for row in rows]
+
     def _delete_where(self, tenant_id: str, doc_id: str, *, min_index: int) -> int:
         query = (
             "SELECT c.id FROM c WHERE c.tenantId = @t AND c.doc_id = @d "

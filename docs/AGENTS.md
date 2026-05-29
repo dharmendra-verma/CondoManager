@@ -311,3 +311,40 @@ clamp at `P1`. ETA is keyed off the band (`P1` "within 2 hours" … `P4` "within
 carrying `ticket_id`, `unit`, `category`, `priority`, `eta`, and a tenant
 `confirmation` string. A tripped guardrail still short-circuits to
 `guardrail_terminated` before any repository write.
+
+---
+
+## 9. Knowledge Agent — RAG over Cosmos (CM-33)
+
+The `knowledge` node answers tenant policy questions by RAG over the Cosmos
+`policies-vector` container that the CM-34 gdrive-sync job populates. It reuses
+CM-34's `agents.knowledge` write-side primitives (`chunk_text`,
+`default_embedder`) and adds the read side.
+
+**Flow** (`agents/knowledge/`):
+
+1. **Retrieve** (`retrieval.retrieve`) — embed the question, run a vector
+   search (`CosmosVectorStore.search_chunks` → `VectorDistance()`) + a keyword
+   search (`keyword_search` → `CONTAINS`), and fuse the two rank lists with
+   **Reciprocal Rank Fusion** into the top-k `RetrievedChunk`s.
+2. **Answer** (`rag.answer_question`) — a strict "use ONLY the numbered context
+   passages" prompt yields a `KnowledgeAnswer` with inline `[n]` citations.
+   Confidence = the top chunk's cosine similarity (`1 - VectorDistance`).
+3. **Refuse + hand off** — if confidence `< CONFIDENCE_THRESHOLD` (0.6) or
+   nothing grounds the answer, the node sets `refused=True` and appends
+   `"maintenance"` to `state.routes`; `graph._knowledge_router` then hands the
+   request to the Maintenance agent.
+
+**Model seam** (`llm.get_chat_model`): GPT-4o-mini `LLMChatModel` when
+`OPENAI_API_KEY` is set (sourced from Key Vault), else a deterministic
+`StubChatModel` — same env-driven pattern as CM-30's `get_triage_classifier`,
+so tests/CI run offline. When `COSMOS_ENDPOINT` is unset the node refuses
+without any model/network call, preserving the no-credentials contract.
+
+**Hallucination control:** the model must answer only from the retrieved
+passages and set `can_answer=false` otherwise; citations are validated against
+the retrieved set before they reach `output`.
+
+**Eval:** `tests/eval/knowledge_seed.jsonl` + `tests/knowledge/test_eval_knowledge.py`
+assert >25% self-service resolution and <1% hallucination using the stub model
+(reproducible in CI); the real-LLM eval is opt-in behind `OPENAI_API_KEY`.

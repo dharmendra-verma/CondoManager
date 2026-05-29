@@ -1,0 +1,17 @@
+{"inputs": {"message": "What are the quiet hours?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-quiet-hours", "gold_chunk_text": "Quiet hours are from 10pm to 7am every day, including weekends."}}
+{"inputs": {"message": "Are pets allowed in the building?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-pets", "gold_chunk_text": "Pets are allowed in the building with a maximum of two pets per unit."}}
+{"inputs": {"message": "When is rent due each month?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-rent", "gold_chunk_text": "Rent is due on the first day of each month; a late fee applies after the fifth."}}
+{"inputs": {"message": "How do I book the party room?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-amenities-booking", "gold_chunk_text": "To book the party room, submit a request at least 48 hours in advance."}}
+{"inputs": {"message": "What is the guest parking policy?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-parking", "gold_chunk_text": "Guest parking policy: visitors may use spots 40 to 50 for up to 24 hours."}}
+{"inputs": {"message": "Where do I dispose of recycling?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-recycling", "gold_chunk_text": "Dispose of recycling in the blue bins located in the basement waste room."}}
+{"inputs": {"message": "Can I sublet my unit?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-sublet", "gold_chunk_text": "You may sublet your unit only with written board approval submitted in advance."}}
+{"inputs": {"message": "What are the pool opening times?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-pool", "gold_chunk_text": "Pool opening times are 7am to 9pm daily during the summer season."}}
+{"inputs": {"message": "What is the move-in deposit amount?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-deposit", "gold_chunk_text": "The move-in deposit amount is 500 dollars and is refundable on inspection."}}
+{"inputs": {"message": "Is smoking allowed on balconies?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-smoking", "gold_chunk_text": "Smoking is not allowed on balconies or in any common areas of the building."}}
+{"inputs": {"message": "How do I report a noise complaint?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-noise", "gold_chunk_text": "To report a noise complaint, contact the front desk or file a ticket online."}}
+{"inputs": {"message": "What are the gym access rules?", "tenant_id": "t-eval"}, "outputs": {"answerable": true, "gold_doc_id": "policy-gym", "gold_chunk_text": "Gym access rules: residents may use the gym from 5am to 11pm with a key fob."}}
+{"inputs": {"message": "What is the weather on Mars today?", "tenant_id": "t-eval"}, "outputs": {"answerable": false}}
+{"inputs": {"message": "Who won the football game last night?", "tenant_id": "t-eval"}, "outputs": {"answerable": false}}
+{"inputs": {"message": "Can you write me a poem about dragons?", "tenant_id": "t-eval"}, "outputs": {"answerable": false}}
+{"inputs": {"message": "How do I invest in cryptocurrency?", "tenant_id": "t-eval"}, "outputs": {"answerable": false}}
+{"inputs": {"message": "What is the stock price of Apple?", "tenant_id": "t-eval"}, "outputs": {"answerable": false}}
