@@ -665,19 +665,17 @@ vendor. First portal story; lives in `portal/`.
 ### One-time operator setup (out-of-band)
 
 1. **Deploy the infra** (`main.bicep`) — provisions `swa-condomanager-<env>`.
-2. **Grab the SWA deployment token** and store it as a GitHub Actions secret:
-   ```bash
-   az staticwebapp secrets list --name swa-condomanager-dev \
-       --query "properties.apiKey" -o tsv
-   # → paste into GitHub secret AZURE_SWA_DEPLOYMENT_TOKEN_DEV
-   ```
-3. **Set the Cosmos app setting** on the SWA (from KV `cosmos-connection-string`):
+2. **Set the Cosmos app setting** on the SWA (from KV `cosmos-connection-string`):
    ```bash
    az staticwebapp appsettings set --name swa-condomanager-dev \
        --setting-names COSMOS_CONNECTION_STRING="<from kv>"
    ```
-4. **Enable CI deploy:** set repo variable `PORTAL_DEPLOY_ENABLED=true`. Until
+3. **Enable CI deploy:** set repo variable `PORTAL_DEPLOY_ENABLED=true`. Until
    then the `deploy-portal-dev` job is skipped (keeps `main` green pre-setup).
+
+No deployment-token secret is stored: `deploy-portal-dev` logs in via OIDC
+(the CM-15 federated credentials) and fetches the SWA token just-in-time with
+`az staticwebapp secrets list`, preserving the repo's OIDC-only posture.
 
 ### Local development
 

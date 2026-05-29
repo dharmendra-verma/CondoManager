@@ -1114,13 +1114,14 @@ for f in "${PORTAL_FILES[@]}"; do
 done
 
 echo "▶  Verifying the portal API never returns PII (shape whitelist regression)"
-# The unauthenticated code lookup must not echo tenant PII. Assert the
-# whitelist + an explicit guard against the banned fields in the shaper.
-if grep -Fq "issue_text" "$PORTAL_DIR/api/src/shape.ts"; then
-  echo "   ✗ shape.ts references issue_text — public projection may leak PII"
+# The unauthenticated code lookup must not echo tenant PII. Strip comment lines
+# first (the file documents the banned fields in a // comment), then assert no
+# real reference to issue_text remains in the shaper code.
+if grep -vE '^[[:space:]]*(//|\*|/\*)' "$PORTAL_DIR/api/src/shape.ts" | grep -q "issue_text"; then
+  echo "   ✗ shape.ts code references issue_text — public projection may leak PII"
   FAIL=1
 else
-  echo "   ✓ shape.ts does not reference PII field issue_text"
+  echo "   ✓ shape.ts code does not reference the PII field issue_text"
 fi
 
 if [ $FAIL -ne 0 ]; then
