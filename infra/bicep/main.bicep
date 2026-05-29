@@ -1,7 +1,7 @@
 // main.bicep — entry point for resources deployed INTO rg-condomanager.
 // Jira: CM-15 (RG + scoped SP)  | CM-16 (Container Apps env)  | CM-17 (Cosmos DB)
 //       CM-18 (Key Vault + User-Assigned MI)  | CM-20 (ACR + base image)
-//       CM-22 (Application Insights as OTLP backend)
+//       CM-22 (Application Insights as OTLP backend)  | CM-23 (LangSmith tracing)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // The shared resource group (rg-condomanager) is pre-created as a one-time
@@ -42,6 +42,12 @@ param cosmosVectorDimensions int = 1536
 @minValue(0)
 @maxValue(100)
 param appInsightsSamplingPercentage int = env == 'dev' ? 100 : 50
+
+@description('Enable LangSmith tracing on the Container App (CM-23). Defaults to enabled in dev, disabled in prod (CM-24 wires Langfuse for prod LLM observations; running both would double-pay and emit twice per call).')
+param langsmithEnabled bool = env == 'dev'
+
+@description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU customers.')
+param langsmithEndpoint string = 'https://api.smith.langchain.com'
 
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
@@ -125,11 +131,16 @@ module keyvault './modules/keyvault.bicep' = {
   }
 }
 
-// KV secret URI for APPLICATIONINSIGHTS_CONNECTION_STRING — Container Apps'
-// native secretRef integration resolves this through the MI at revision start.
-// `vaultUri` ends with `/`, so the concatenation produces the canonical
+// KV secret URIs for Container Apps' native secretRef integration. The MI
+// resolves these against KV at revision start. `vaultUri` ends with `/`, so
+// the concatenation produces the canonical
 // `https://<kv-name>.vault.azure.net/secrets/<secret-name>` form.
 var appInsightsKvSecretUri = '${keyvault.outputs.vaultUri}secrets/app-insights-connection-string'
+var langsmithKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langsmith-api-key'
+
+// CM-23: project name routed via LANGCHAIN_PROJECT. One LangSmith project per
+// env so traces don't bleed between dev iteration and any prod opt-in.
+var langsmithProject = 'condomanager-${env}'
 
 // Hello-world Container App — smoke-test surface for CM-16 AC.
 // CM-18: attaches the shared User-Assigned MI so the app can read KV secrets
@@ -137,6 +148,9 @@ var appInsightsKvSecretUri = '${keyvault.outputs.vaultUri}secrets/app-insights-c
 // CM-22: mounts the App Insights connection string from KV as an env var so
 // configure_otel() switches to the Azure Monitor exporter automatically once
 // the post-deploy seed step replaces the REPLACE-ME placeholder.
+// CM-23: mounts the LangSmith API key + sets LANGCHAIN_* env vars when
+// langsmithEnabled is true (default: dev only — prod is reserved for Langfuse
+// in CM-24).
 module containerApp './modules/container-app.bicep' = {
   name: 'ca-hello-${env}'
   params: {
@@ -146,6 +160,9 @@ module containerApp './modules/container-app.bicep' = {
     environmentId: containerAppsEnv.outputs.environmentId
     userAssignedIdentityId: managedIdentity.outputs.identityId
     appInsightsKvSecretUri: appInsightsKvSecretUri
+    langsmithKvSecretUri: langsmithEnabled ? langsmithKvSecretUri : ''
+    langsmithProjectName: langsmithEnabled ? langsmithProject : ''
+    langsmithEndpoint: langsmithEndpoint
   }
 }
 
@@ -213,3 +230,9 @@ output appInsightsName string = appInsights.outputs.appInsightsName
 output appInsightsId string = appInsights.outputs.appInsightsId
 @secure()
 output appInsightsConnectionString string = appInsights.outputs.connectionString
+
+// CM-23 outputs — empty string when LangSmith is disabled, lets tooling
+// (e.g. seed-langsmith-dataset.py) discover the project name without
+// hard-coding the convention.
+output langsmithProject string = langsmithEnabled ? langsmithProject : ''
+output langsmithEnabled bool = langsmithEnabled

@@ -59,9 +59,10 @@ infra/
     ├── seed-keyvault-secrets.sh              # Seed the 9 initial secret names with REPLACE-ME (CM-18, +1 in CM-22)
     ├── keyvault-smoke-test.py                # Post-deploy validation: MI → KV read (CM-18)
     ├── acr-prune.sh                          # Basic-SKU equivalent of ACR retention policy (CM-20)
-    └── seed-app-insights-secret.sh           # Post-deploy: populate KV with the AppI conn string (CM-22)
+    ├── seed-app-insights-secret.sh           # Post-deploy: populate KV with the AppI conn string (CM-22)
+    └── seed-langsmith-dataset.py             # Post-deploy: upload tests/eval/triage_seed.jsonl to LangSmith (CM-23)
 agents/
-└── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21)
+└── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21, AppI in CM-22, LangSmith in CM-23)
 .github/
 └── workflows/
     ├── build.yml                             # PR + push:main · per-area lint/what-if + summary comment (CM-19, + python area in CM-21)
@@ -70,11 +71,12 @@ agents/
 tests/
 ├── infra/
 │   └── test_bicep_lint.sh                    # Bicep lint runs in CI on every PR touching infra
-└── observability/                            # pytest suite for agents/observability/ (CM-21)
+├── observability/                            # pytest suite for agents/observability/ (CM-21, + AppI in CM-22, + LangSmith in CM-23)
+└── eval/                                     # Eval dataset fixtures — CM-30 extends triage_seed.jsonl to 200 (CM-23)
 docs/
 ├── INFRA.md                                  # this file
 ├── CICD.md                                   # CI/CD operator guide (CM-19)
-└── OBSERVABILITY.md                          # OTel + request_id + manual span helpers (CM-21)
+└── OBSERVABILITY.md                          # OTel + request_id + manual span helpers (CM-21, + AppI in CM-22, + LangSmith in CM-23)
 pyproject.toml                                # Python project metadata (CM-21)
 requirements-lock.txt                         # pinned transitive Python deps (CM-21)
 ```

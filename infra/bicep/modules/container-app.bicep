@@ -1,5 +1,6 @@
 // container-app.bicep — Hello-world Container App (smoke-test surface).
 // Jira: CM-16 (initial)  | CM-18 (User-Assigned MI)  | CM-22 (App Insights via KV secretRef)
+//       CM-23 (LangSmith tracing env vars + KV secretRef)
 // Epic: CM-1 (Foundation & Azure Infrastructure)  | Phase 0
 //
 // Acts as the initial app shell so CM-16 has something to deploy. The image
@@ -73,11 +74,25 @@ param userAssignedIdentityId string = ''
 @description('Key Vault secret URI (https://<vault>.vault.azure.net/secrets/<name>) for the App Insights connection string. Empty string (default) omits the App Insights env var entirely — back-compat for callers that do not wire App Insights. Requires userAssignedIdentityId to also be set, since the MI is what resolves the secretRef against KV.')
 param appInsightsKvSecretUri string = ''
 
+@description('Key Vault secret URI for the LangSmith API key (CM-23). Empty string (default) omits LangSmith env vars. Requires userAssignedIdentityId and a non-empty langsmithProjectName.')
+param langsmithKvSecretUri string = ''
+
+@description('LangSmith project name routed via LANGCHAIN_PROJECT (CM-23). Empty string omits LangSmith env vars even if the secret URI is set.')
+param langsmithProjectName string = ''
+
+@description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU.')
+param langsmithEndpoint string = 'https://api.smith.langchain.com'
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
 // Both must be present — Container Apps secretRef resolution requires the
 // identity to read the KV secret at revision start.
 var hasAppInsights = hasIdentity && !empty(appInsightsKvSecretUri)
+// LangSmith is enabled only when ALL three are set: identity (for KV resolution),
+// secret URI, and project name. Missing the project name is a misconfiguration
+// (we'd ship a key with no project routing); fail closed rather than send to
+// LangSmith's "default" project.
+var hasLangsmith = hasIdentity && !empty(langsmithKvSecretUri) && !empty(langsmithProjectName)
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
@@ -101,17 +116,30 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
-      // KV-backed secret resolved through the MI at revision start.
-      // Container Apps caches the secret per revision; rotating the value in
-      // KV requires a new revision to pick it up — acceptable because the
-      // post-deploy seed script runs once and rotations are operator events.
-      secrets: hasAppInsights ? [
-        {
-          name: 'appinsights-conn'
-          identity: userAssignedIdentityId
-          keyVaultUrl: appInsightsKvSecretUri
-        }
-      ] : []
+      // KV-backed secrets resolved through the MI at revision start.
+      // Container Apps caches secrets per revision; rotating a value in KV
+      // requires a new revision to pick it up — acceptable because the
+      // post-deploy seed scripts run once and rotations are operator events.
+      //
+      // Composed via `union()` so each observability backend (CM-22 AppI,
+      // CM-23 LangSmith, future backends) adds its own optional sub-array
+      // without nested ternaries.
+      secrets: union(
+        hasAppInsights ? [
+          {
+            name: 'appinsights-conn'
+            identity: userAssignedIdentityId
+            keyVaultUrl: appInsightsKvSecretUri
+          }
+        ] : [],
+        hasLangsmith ? [
+          {
+            name: 'langsmith-api-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: langsmithKvSecretUri
+          }
+        ] : []
+      )
     }
     template: {
       containers: [
@@ -122,12 +150,35 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json(cpu)
             memory: memory
           }
-          env: hasAppInsights ? [
-            {
-              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-              secretRef: 'appinsights-conn'
-            }
-          ] : []
+          env: union(
+            hasAppInsights ? [
+              {
+                name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+                secretRef: 'appinsights-conn'
+              }
+            ] : [],
+            // CM-23 LangSmith block — all four env vars present together or
+            // none. LANGCHAIN_TRACING_V2=true is the SDK toggle; the API key
+            // comes via secretRef; project name + endpoint are plaintext.
+            hasLangsmith ? [
+              {
+                name: 'LANGCHAIN_API_KEY'
+                secretRef: 'langsmith-api-key'
+              }
+              {
+                name: 'LANGCHAIN_TRACING_V2'
+                value: 'true'
+              }
+              {
+                name: 'LANGCHAIN_PROJECT'
+                value: langsmithProjectName
+              }
+              {
+                name: 'LANGCHAIN_ENDPOINT'
+                value: langsmithEndpoint
+              }
+            ] : []
+          )
         }
       ]
       scale: {
