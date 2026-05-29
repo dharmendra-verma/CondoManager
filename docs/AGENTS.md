@@ -5,9 +5,9 @@
 This is the orchestrator: a `StateGraph(AgentState)` with nodes for triage,
 knowledge, maintenance, escalation, HITL review, and a guardrail-terminated
 terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one at a time without
-touching the spine. **`triage` (CM-30, see §3) and `maintenance` (CM-31, see
-§8) are now real**; `knowledge` and `escalation` remain stubs until their
-stories land.
+touching the spine. **`triage` (CM-30, see §3), `maintenance` (CM-31, see §8),
+and the `vendor` agent that runs after it (CM-35, see §9) are now real**;
+`knowledge` and `escalation` remain stubs until their stories land.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
@@ -29,10 +29,12 @@ trivial state updates and the same run produces traces in both
    v          v          v          v
 knowledge maintenance escalation guardrail_terminated
    |          |          |               |
-   |          |          v               |
-   |          |     hitl_review          |
-   |          |          |               |
-   +----------+----------+---------------+
+   |          v          |               |
+   |        vendor        |               |
+   |        /    \        v               |
+   |   (auto)  (approve) hitl_review       |
+   |      |         \____/  |              |
+   +------+----------------+---------------+
                          |
                          v
                         END
@@ -41,11 +43,15 @@ knowledge maintenance escalation guardrail_terminated
 * **Entry**: `START -> triage` (unconditional).
 * **Router**: `agents.orchestrator.graph._router` reads `state.routes[-1]`
   and dispatches. Default is `"triage"` when `routes` is empty.
+* **Vendor (CM-35)**: `maintenance -> vendor`. The vendor node either
+  auto-dispatches and ends, or routes to `hitl_review` for manager approval
+  (`agents.orchestrator.graph._vendor_router` on `routes[-1]`).
 * **Stop short-circuit**: Any node whose guardrail trips returns
   `routes=["guardrail_terminated"]` and skips its real work.
-* **HITL**: `escalation -> hitl_review -> END`. `hitl_review` calls
-  LangGraph's `interrupt(...)` primitive; the graph pauses and resumes
-  via `graph.invoke(Command(resume=<payload>), config=...)`.
+* **HITL**: `escalation -> hitl_review -> END`, and `vendor -> hitl_review`
+  for manager approval. `hitl_review` calls LangGraph's `interrupt(...)`
+  primitive; the graph pauses and resumes via
+  `graph.invoke(Command(resume=<payload>), config=...)`.
 
 ---
 
@@ -291,3 +297,59 @@ clamp at `P1`. ETA is keyed off the band (`P1` "within 2 hours" … `P4` "within
 carrying `ticket_id`, `unit`, `category`, `priority`, `eta`, and a tenant
 `confirmation` string. A tripped guardrail still short-circuits to
 `guardrail_terminated` before any repository write.
+
+---
+
+## 9. Vendor Agent (`agents/vendor/`, CM-35)
+
+The `vendor` node runs after `maintenance` and delegates to
+`agents.vendor.VendorAgent`. It reads the created ticket from `state.output`
+(`category` / `priority` / `unit` / `ticket_id`), matches a contractor, and
+either auto-dispatches or routes to `hitl_review` for manager approval. All
+logic is deterministic (no LLM); seams follow the `get_checkpointer()` /
+`get_ticket_repository()` pattern, so the suite runs offline.
+
+### Pipeline
+
+```
+non-`ticket_created` output (duplicate / guardrail) -> pass through to END
+match vendors (category + availability + performance) -> none -> alert manager, END
+  -> decide (AC3): pre_approved AND est_cost < threshold AND not safety/legal
+       auto-dispatch:  notify vendor (email/SMS seam), END
+       needs approval: alert manager, route to hitl_review
+```
+
+### Matching (`matching.py`, AC2)
+
+Filter by category + availability (weekday calendar), rank by
+`performance_score` (desc), tie-break cheaper `cost_tier`, then id. Pre-approval
+is **not** a matching filter — it feeds the dispatch decision, so the best
+contractor is surfaced even when it needs approval.
+
+### Dispatch rule (`dispatch.py`, AC3)
+
+Auto-dispatch only if **all**: vendor `pre_approved`, `estimate_cost(category,
+priority) < threshold` (default $250), and **not** safety/legal. Safety/legal
+is derived conservatively — `P1`/emergency, `structural` category, or
+`intent == escalation` (CM-31 tickets carry no explicit legal flag; CM-32 owns
+the semantic classifier) — erring toward requiring approval.
+
+### Seams + boundaries
+
+* `get_vendor_repository()` — seeded in-memory roster (`seed.py`). **No Cosmos
+  `vendors` container yet** — a deferred infra follow-up.
+* `get_vendor_notifier()` — `LoggingVendorNotifier` (PII-masked) by default;
+  real email/SMS (Twilio) deferred. The **manager** approval alert reuses
+  CM-31's `agents.maintenance.get_notifier`.
+* Real Slack/email approval transport is **CM-32's** shared work. CM-35
+  composes the approve/deny payload and gates via `hitl_review`.
+
+### Node outputs
+
+The vendor node adds `vendor_status` to `state.output`: `auto_dispatched`
+(+ `vendor_id`, `estimated_cost`), `pending_approval` (+ `vendor_id`,
+`approval_reason`, `approval_requested_at`), or `no_vendor`. It always sets
+`routes` to `vendor_done` (-> END) or `hitl_review` (manager approval). The
+`<15 min` approval round-trip (AC5) is an operational SLA (CM-26 alerts), not
+agent code — the agent stamps `approval_requested_at`. Post-approval dispatch
+finalization (resume → notify vendor) is a documented follow-up.

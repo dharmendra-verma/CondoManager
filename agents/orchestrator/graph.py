@@ -47,6 +47,19 @@ def _router(state: AgentState) -> str:
     return state.routes[-1]
 
 
+def _vendor_router(state: AgentState) -> str:
+    """Route out of the ``vendor`` node (CM-35).
+
+    The vendor node sets ``routes[-1]`` to ``hitl_review`` when manager
+    approval is required, else ``vendor_done`` (auto-dispatched, no vendor,
+    duplicate pass-through, or a guardrail termination). Anything that is not
+    an explicit approval request ends the graph.
+    """
+    if state.routes and state.routes[-1] == "hitl_review":
+        return "hitl_review"
+    return "vendor_done"
+
+
 def build_graph(
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
@@ -71,6 +84,7 @@ def build_graph(
     g.add_node("triage", nodes.triage)
     g.add_node("knowledge", nodes.knowledge)
     g.add_node("maintenance", nodes.maintenance)
+    g.add_node("vendor", nodes.vendor)
     g.add_node("escalation", nodes.escalation)
     g.add_node("hitl_review", nodes.hitl_review)
     g.add_node("guardrail_terminated", nodes.guardrail_terminated)
@@ -91,10 +105,20 @@ def build_graph(
         },
     )
 
-    # Downstream nodes — knowledge + maintenance are terminal in the
-    # hello-world shape. Escalation routes through HITL.
+    # Downstream nodes. Knowledge is terminal. Maintenance now flows into the
+    # Vendor Agent (CM-35); the vendor node either ends (auto-dispatched / no
+    # vendor / duplicate pass-through) or routes to the HITL gate for manager
+    # approval. Escalation routes through HITL.
     g.add_edge("knowledge", END)
-    g.add_edge("maintenance", END)
+    g.add_edge("maintenance", "vendor")
+    g.add_conditional_edges(
+        "vendor",
+        _vendor_router,
+        {
+            "hitl_review": "hitl_review",
+            "vendor_done": END,
+        },
+    )
     g.add_edge("escalation", "hitl_review")
     g.add_edge("hitl_review", END)
     g.add_edge("guardrail_terminated", END)
