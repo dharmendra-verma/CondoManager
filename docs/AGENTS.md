@@ -2,10 +2,12 @@
 
 > Jira: **CM-28** | Epic: CM-Epic 4 (LangGraph Orchestrator) | Phase 0
 
-This is the minimal viable orchestrator: a `StateGraph(AgentState)` with
-stub nodes for triage, knowledge, maintenance, escalation, HITL review,
-and a guardrail-terminated terminal. CM-30 / CM-31 / CM-32 will replace
-the stub bodies one at a time without touching the spine.
+This is the orchestrator: a `StateGraph(AgentState)` with nodes for triage,
+knowledge, maintenance, escalation, HITL review, and a guardrail-terminated
+terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one at a time without
+touching the spine. **`triage` (CM-30, see §3) and `maintenance` (CM-31, see
+§8) are now real**; `knowledge` and `escalation` remain stubs until their
+stories land.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
@@ -129,17 +131,36 @@ falls back to a deterministic keyword heuristic when `OPENAI_API_KEY` is
 unset, preserving the original stub's routing (`"human"`/`"escalat"` →
 escalation, `"fix"`/`"broken"`/`"leak"` → maintenance, else → knowledge) so
 this hello-world spine stays testable offline. The spine topology is
-unchanged. CM-31 (maintenance) and CM-32 (escalation) remain stubs.
+unchanged. CM-31 (maintenance) remains a stub.
+
+### `escalation` is now a real agent (CM-32)
+
+The `escalation` node is the Escalation Manager Agent — see
+[`docs/ESCALATION.md`](ESCALATION.md). It sub-classifies the escalation
+(`repeat`/`service_failure`/`safety`/`communication_breakdown`/`multi_issue`/`legal`),
+raises a **semantic** `legal_risk` flag, persists an `EscalationRecord` to the
+Cosmos `escalations` container, posts a manager alert (Slack), and prepares an
+empathetic tenant draft that is **held** behind `hitl_review`. Like triage, it
+runs offline (`get_escalation_classifier()` → keyword heuristic with no key).
+The escalation result lives on its own `AgentState.escalation` field (the
+record must survive the `hitl_review` step, which overwrites `output`).
 
 ---
 
 ## 4. HITL `interrupt()` contract
 
-`hitl_review` calls LangGraph's `interrupt(...)` primitive. The pause
-payload (visible to the resumer) is:
+`hitl_review` calls LangGraph's `interrupt(...)` primitive. Since CM-32 the
+pause payload (visible to the resumer) carries the escalation review context:
 
 ```python
-{"reason": "stub-hitl-review", "draft": state.output.get("draft")}
+{
+    "reason": "escalation_review",
+    "category": state.escalation.category,   # e.g. "legal"
+    "legal_risk": state.escalation.legal_risk,
+    "severity": state.escalation.severity,   # "high" | "critical"
+    "draft": state.output.get("draft"),      # the held tenant reply
+    "manager_alert": state.escalation.manager_alert,
+}
 ```
 
 To resume after a human has approved:
@@ -153,10 +174,11 @@ graph.invoke(
 )
 ```
 
-The whatever-the-human-sent payload lands as
-`state.output["approved"]`, and `state.output["via"] == "hitl"` marks
-the path. CM-32 will replace `_guardrail_termination`'s minimal escalation
-draft with a real tenant-facing reply behind the same gate.
+The human payload lands as `state.output["approved"]`, `state.output["via"]
+== "hitl"` marks the path, and `state.output["sent"]` reflects the decision.
+**Legal gate (CM-32):** the draft is marked `sent` — and the record
+transitioned to `approved_sent` — **only** when `approved is True`. There is
+no auto-approve path, so a legal-flagged case is never sent without a human.
 
 ---
 
@@ -233,7 +255,66 @@ python -m agents.orchestrator.demo
 The same `request_id` appears in both backends; node-level spans show as
 `langgraph.node.<name>` with `tenant_id` and `request_id` attributes.
 
-## 8. Knowledge Agent — RAG over Cosmos (CM-33)
+---
+
+## 8. Maintenance Agent (`agents/maintenance/`, CM-31)
+
+The `maintenance` node delegates to `agents.maintenance.MaintenanceAgent`. The
+span + guardrail contract stays in the node; all domain logic lives in the
+package. The agent is deterministic (no LLM in the hot path) so its outputs are
+exactly assertable and the dedup-precision eval is reproducible in CI.
+
+### Pipeline
+
+```
+resolve unit + category
+  -> dedup query (same unit, 7-day window)
+  -> OPEN duplicate?  yes -> link to original, confirm tenant, STOP (no new ticket)
+                      no  -> assign priority + ETA, persist, notify manager, confirm tenant
+```
+
+### Domain model (`schema.py`)
+
+`Ticket` (persisted to the CM-17 `tickets` container, partition key `/tenantId`):
+`id` (confirmation code `TKT-XXXXXXXX`), `tenant_id`, `unit`, `issue_text`,
+`category`, `priority` (`P1`–`P4`), `status` (`New` / `In Progress` / `Waiting`
+/ `Resolved`), `owner`, `created_at` / `updated_at`, `request_id`,
+`duplicate_of`, `eta`.
+
+### Dedup rule (`dedup.py`, AC2)
+
+A candidate duplicates an existing ticket iff: same **resolved** unit (an
+`unknown` unit never matches — protects precision), same coarse `categorize`
+bucket, token-Jaccard `similarity >= 0.3`, and the existing ticket is within
+`DEDUP_WINDOW_DAYS = 7`. `find_open_duplicate` additionally skips `Resolved`
+tickets (a recurrence opens a fresh ticket and bumps priority via `is_repeat`).
+`is_duplicate_pair` is the predicate the AC6 precision eval grades.
+
+### Priority (`priority.py`, AC3)
+
+Base band from `Urgency` (`None` -> `MEDIUM`, since CM-30 Triage isn't merged
+yet). `ANGRY`/`URGENT` tone bumps one band; repeat-status bumps one band; bumps
+clamp at `P1`. ETA is keyed off the band (`P1` "within 2 hours" … `P4` "within
+5 business days").
+
+### Seams (env-gated, mirror `get_checkpointer`)
+
+* `get_ticket_repository()` — `CosmosTicketRepository` when `COSMOS_ENDPOINT` is
+  a real value, else a cached `InMemoryTicketRepository` (offline tests + demo).
+* `get_notifier()` — `LoggingNotifier` (PII-masked) by default. **Real Slack/
+  email transport is CM-32's shared deliverable**; CM-31 composes the manager
+  alert and dispatches it through this seam.
+
+### Node outputs
+
+`state.output["status"]` is `ticket_created` (new) or `duplicate` (linked),
+carrying `ticket_id`, `unit`, `category`, `priority`, `eta`, and a tenant
+`confirmation` string. A tripped guardrail still short-circuits to
+`guardrail_terminated` before any repository write.
+
+---
+
+## 9. Knowledge Agent — RAG over Cosmos (CM-33)
 
 The `knowledge` node answers tenant policy questions by RAG over the Cosmos
 `policies-vector` container that the CM-34 gdrive-sync job populates. It reuses

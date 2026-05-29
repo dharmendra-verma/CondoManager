@@ -25,6 +25,7 @@ preserving the original stub's keyword routing.
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 from langgraph.types import interrupt
 
@@ -40,7 +41,10 @@ from agents.knowledge.rag import REFUSAL_TEXT
 from agents.observability import langgraph_node_span
 
 from . import guardrails
+from .escalation import build_record, get_escalation_classifier
+from .escalation_store import get_escalation_store
 from .history import get_history_provider
+from .notify import get_manager_notifier
 from .state import AgentState
 from .triage import get_triage_classifier, route_for
 
@@ -172,60 +176,122 @@ def knowledge(state: AgentState) -> dict[str, Any]:
 
 
 def maintenance(state: AgentState) -> dict[str, Any]:
-    """Maintenance stub — CM-31 replaces with ticket lifecycle + dedup."""
+    """Maintenance node — ticket lifecycle + dedup (CM-31).
+
+    Delegates to :class:`agents.maintenance.MaintenanceAgent`, which detects
+    duplicates (same unit + similar issue within 7 days), creates a
+    priority-ranked ticket, sends an SOP-aligned tenant confirmation, and
+    notifies the manager on new tickets. The span + guardrail contract stays
+    here; all domain logic lives in the ``agents.maintenance`` package.
+    """
     with langgraph_node_span("maintenance", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
         if gate.tripped:
             return _guardrail_termination(gate.reason)
-        return {
-            "output": {"status": "ticket_stub", "ticket_id": "stub-ticket-0001"},
-        }
+        # Imported lazily so the orchestrator package has no import-time
+        # dependency on the maintenance package (keeps the spine importable
+        # in isolation, mirroring the rest of the codebase's seam style).
+        from agents.maintenance import MaintenanceAgent  # noqa: PLC0415
+
+        return MaintenanceAgent().handle(state)
 
 
 def escalation(state: AgentState) -> dict[str, Any]:
-    """Escalation stub — CM-32 replaces with empathetic agent + HITL gate.
+    """Escalation Agent (CM-32) — classify, record, alert, hold a draft.
 
-    Routes to ``hitl_review`` so the HITL interrupt fires and the graph
-    pauses. CM-32 will also draft an internal escalation record + tenant
-    reply behind the same gate.
+    Reached when CM-30 triage sets ``intent=escalation``. Steps:
+
+    1. Guardrail check first (CM-26/28 contract).
+    2. Sub-classify the escalation + raise the semantic ``legal_risk`` flag
+       (AC #1/#2) via :func:`~agents.orchestrator.escalation.get_escalation_classifier`
+       (GPT-4o-mini, or the offline heuristic with no ``OPENAI_API_KEY``).
+    3. Build the :class:`~agents.orchestrator.state.EscalationRecord` —
+       internal summary, manager alert, and an empathetic tenant draft that
+       is **held** (never sent here) — and persist it to Cosmos (AC #3).
+    4. Post the manager alert (AC #4); delivery is best-effort and never
+       breaks the graph.
+    5. Route to ``hitl_review`` (AC #5/#6 — every escalation is gated, and
+       the draft is only ever marked sent on explicit approval there).
     """
     with langgraph_node_span("escalation", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
         if gate.tripped:
             return _guardrail_termination(gate.reason)
+
+        message = (
+            state.normalized.content if state.normalized is not None
+            else state.raw_message
+        )
+        classifier = get_escalation_classifier()
+        classification = classifier.classify(message, state.history)
+        record = build_record(
+            record_id=f"esc-{uuid4().hex}",
+            tenant_id=state.tenant_id,
+            request_id=state.request_id,
+            classification=classification,
+            urgency=state.urgency,
+            tone=state.tone,
+            message=message,
+        )
+        get_escalation_store().save(record)
+        notified = get_manager_notifier().notify(record)
+
         return {
-            "output": {"status": "escalated_stub", "draft": "stub-tenant-reply"},
+            "escalation": record,
+            "cost_so_far": state.cost_so_far + classifier.cost_per_call_usd,
+            "output": {
+                "status": "escalation_pending_review",
+                "draft": record.tenant_draft,
+                "legal_risk": record.legal_risk,
+                "manager_notified": notified,
+            },
             "routes": ["hitl_review"],
         }
 
 
 def hitl_review(state: AgentState) -> dict[str, Any]:
-    """Human-in-the-loop interrupt — pauses graph execution.
+    """Human-in-the-loop interrupt — pauses for manager review (CM-32 gate).
 
-    Uses LangGraph's ``interrupt()`` primitive (0.2+). When called, the
-    checkpointer persists state and ``graph.invoke(...)`` returns with
-    a ``__interrupt__`` marker; the caller resumes by re-invoking with
-    the same ``thread_id`` and a resume payload.
+    Uses LangGraph's ``interrupt()`` primitive: the checkpointer persists
+    state and ``graph.invoke(...)`` returns with a ``__interrupt__`` marker;
+    the caller resumes via ``graph.invoke(Command(resume=<payload>), ...)``.
 
-    CM-32 is the first real consumer — its escalation agent populates
-    ``state.output['draft']`` with a tenant reply, and HITL approval
-    here gates whether that draft goes out. For CM-28 we just pause and
-    accept whatever the resumer sends back.
+    The pause payload surfaces the escalation record (category, legal flag,
+    severity, the held draft, the manager alert) so a UI/operator can decide.
+
+    **Legal gate (AC #6).** The tenant draft is only ever marked ``sent`` —
+    and the record transitioned to ``approved_sent`` — when the resume payload
+    explicitly approves (``approved is True``). There is no auto-approve path,
+    so a legal-flagged case can never be sent without a human. Anything else
+    (reject, missing/false approval) yields ``sent=False`` / ``rejected``.
     """
     with langgraph_node_span("hitl_review", tenant_id=state.tenant_id):
-        # The dict passed to interrupt() shows up in the resumer's
-        # `graph.invoke(Command(resume=...), config=...)` context. We
-        # include the draft (if any) and a stub reason so a UI can render
-        # something for the human reviewer.
+        rec = state.escalation
         approval = interrupt(
             {
-                "reason": "stub-hitl-review",
+                "reason": "escalation_review",
+                "category": rec.category.value if rec else None,
+                "legal_risk": rec.legal_risk if rec else False,
+                "severity": rec.severity if rec else None,
                 "draft": (state.output or {}).get("draft"),
+                "manager_alert": rec.manager_alert if rec else None,
             }
         )
-        return {
-            "output": {"approved": approval, "via": "hitl"},
+        # Explicit-approval-only: dict payload must carry approved==True, or a
+        # bare resume value must itself be True. Everything else withholds.
+        approved = (
+            approval.get("approved") is True
+            if isinstance(approval, dict)
+            else approval is True
+        )
+        updates: dict[str, Any] = {
+            "output": {"approved": approval, "via": "hitl", "sent": approved},
         }
+        if rec is not None:
+            updates["escalation"] = rec.model_copy(
+                update={"status": "approved_sent" if approved else "rejected"}
+            )
+        return updates
 
 
 def guardrail_terminated(state: AgentState) -> dict[str, Any]:
