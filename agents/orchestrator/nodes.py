@@ -12,9 +12,14 @@ Each node body is required to:
 
 Stub nodes here return trivial state updates (e.g. ``{"intent": "stub"}``)
 so the hello-world demo runs without OpenAI credentials and the trace
-contract is testable end-to-end. CM-30 Triage, CM-31 Maintenance, and
-CM-32 Escalation each replace one stub with real LLM logic; the spine
-stays unchanged.
+contract is testable end-to-end. CM-31 Maintenance and CM-32 Escalation
+each still replace one stub with real LLM logic; the spine stays unchanged.
+
+CM-30 has replaced the ``triage`` stub with a real classifier (see
+:func:`triage` below + :mod:`agents.orchestrator.triage`). It still runs
+without OpenAI credentials — :func:`~agents.orchestrator.triage.get_triage_classifier`
+falls back to a deterministic heuristic when ``OPENAI_API_KEY`` is unset,
+preserving the original stub's keyword routing.
 """
 
 from __future__ import annotations
@@ -26,7 +31,9 @@ from langgraph.types import interrupt
 from agents.observability import langgraph_node_span
 
 from . import guardrails
+from .history import get_history_provider
 from .state import AgentState
+from .triage import get_triage_classifier, route_for
 
 #: Canonical route name for the guardrail-terminated terminal. The router
 #: in ``graph.py`` maps this to the ``guardrail_terminated`` node.
@@ -45,28 +52,46 @@ def _guardrail_termination(reason: str | None) -> dict[str, Any]:
 
 
 def triage(state: AgentState) -> dict[str, Any]:
-    """Triage stub — CM-30 replaces this with real GPT-4o-mini classification.
+    """Triage Agent (CM-30) — classify intent/urgency/tone, then route.
 
-    Picks a route from a tiny keyword heuristic over ``state.raw_message``
-    so the spine is fully testable end-to-end without an LLM:
+    Replaces the CM-28 keyword stub with real classification while keeping
+    the spine and the no-credentials contract intact:
 
-    * ``"human"`` / ``"escalat"`` -> ``escalation`` (-> ``hitl_review``)
-    * ``"fix"`` / ``"broken"`` / ``"leak"`` -> ``maintenance``
-    * everything else -> ``knowledge``
-
-    Real Triage (CM-30) will replace this with GPT-4o-mini classification
-    that emits the matching :class:`Intent` / :class:`Urgency` / :class:`Tone`.
+    1. Guardrail check first (CM-26/28 contract) — short-circuit to the
+       terminal if a Stop Rule has tripped, before any classifier work.
+    2. Look up the tenant's recent ticket history (AC #5) via the
+       :func:`~agents.orchestrator.history.get_history_provider` seam.
+    3. Classify the message — :func:`~agents.orchestrator.triage.get_triage_classifier`
+       returns GPT-4o-mini when ``OPENAI_API_KEY`` is set, else a
+       deterministic heuristic (so tests + demo run with no credentials).
+       The message is the CM-29 PII-masked ``normalized.content`` when a
+       channel adapter has run, else the raw ``raw_message``.
+    4. Persist ``intent`` / ``urgency`` / ``tone`` / ``history``, bump
+       ``cost_so_far`` by the classifier's per-call estimate (keeps the
+       CM-26 cost cap meaningful), and route via
+       :func:`~agents.orchestrator.triage.route_for` (AC #6).
     """
     with langgraph_node_span("triage", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
         if gate.tripped:
             return _guardrail_termination(gate.reason)
-        msg = (state.raw_message or "").lower()
-        if "human" in msg or "escalat" in msg:
-            return {"intent": "escalation", "routes": ["escalation"]}
-        if "fix" in msg or "broken" in msg or "leak" in msg:
-            return {"intent": "maintenance", "routes": ["maintenance"]}
-        return {"intent": "inquiry", "routes": ["knowledge"]}
+
+        history = get_history_provider().recent_tickets(state.tenant_id)
+        message = (
+            state.normalized.content if state.normalized is not None
+            else state.raw_message
+        )
+        classifier = get_triage_classifier()
+        result = classifier.classify(message, history)
+
+        return {
+            "intent": result.intent,
+            "urgency": result.urgency,
+            "tone": result.tone,
+            "history": history,
+            "cost_so_far": state.cost_so_far + classifier.cost_per_call_usd,
+            "routes": [route_for(result)],
+        }
 
 
 def knowledge(state: AgentState) -> dict[str, Any]:

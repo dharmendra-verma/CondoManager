@@ -41,6 +41,22 @@ def reset_otel() -> Generator[None, None, None]:
     _reset_otel_globals()
 
 
+@pytest.fixture(autouse=True)
+def _force_offline_triage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Force the deterministic heuristic Triage classifier (CM-30).
+
+    Graph + hello-world tests assert topology, routing, and the trace
+    contract — not LLM output quality. ``get_triage_classifier()`` returns the
+    real ``LLMTriageClassifier`` whenever ``OPENAI_API_KEY`` is set, so a
+    developer running the suite with a live key in their shell would hit the
+    network and could flake (e.g. the model classifying ``"ping"`` somewhere
+    other than ``knowledge``). CI has no key, so this just makes local runs
+    match CI. Tests that specifically want the LLM path set the key themselves
+    via ``monkeypatch.setenv`` (which runs after this autouse fixture).
+    """
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+
 @pytest.fixture
 def in_memory_spans() -> Generator[InMemorySpanExporter, None, None]:
     """Install an in-memory exporter on a fresh TracerProvider."""
