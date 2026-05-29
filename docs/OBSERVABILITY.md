@@ -445,15 +445,117 @@ stabilising and will gradually replace these. The KQL `coalesce(...)`
 keeps the workbook working through that transition — neither side
 needs to ship before the other.
 
+## Structured logging (CM-27)
+
+Every Python log line is a single JSON object on stdout. Container Apps
+captures stdout to the Log Analytics workspace (CM-16 + CM-22), where KQL
+queries can join logs to App Insights spans and Langfuse observations by
+`request_id` — the single correlation primitive shared across all three.
+
+Why stdout, not the Azure Monitor logger? CM-22's
+`configure_azure_monitor(logger_name=None)` explicitly deferred Python
+logging to this story. Container Apps already pipes stdout to Log
+Analytics, so there's no missing channel.
+
+### Quickstart
+
+```python
+from agents.observability import configure_logging, with_request_id, with_tenant
+
+configure_logging(service_name="orchestrator", environment="dev")
+
+# Inbound boundary (HTTP handler, queue consumer, scheduled job)
+with with_request_id() as rid, with_tenant("tenant-42"):
+    import logging
+    logging.getLogger(__name__).info("processing message")
+# stdout:
+# {"ts": "2026-05-29 ...", "level": "INFO", "logger": "agents.orchestrator",
+#  "msg": "processing message", "service_name": "orchestrator",
+#  "environment": "dev", "service_version": "0.1.0",
+#  "request_id": "req_a1b2c3d4e5f6", "tenant_id": "tenant-42"}
+```
+
+`configure_logging()` is idempotent — call it once at app startup; subsequent
+calls (e.g. from notebook reloads) are no-ops.
+
+### Schema
+
+| Field | Type | Source | Always present? |
+|------|------|--------|-----------------|
+| `ts` | string | record timestamp | yes |
+| `level` | string | `DEBUG` / `INFO` / `WARNING` / `ERROR` | yes |
+| `logger` | string | logger name | yes |
+| `msg` | string | rendered message, PII-masked | yes |
+| `service_name` | string | `configure_logging(service_name=…)` | yes |
+| `environment` | string | `dev` / `prod` | yes |
+| `service_version` | string | `OTEL_SERVICE_VERSION` env, default `0.1.0` | yes |
+| `request_id` | string | `with_request_id()` contextvar (CM-21) | yes (may be `"unknown"`) |
+| `tenant_id` | string | `with_tenant()` contextvar (CM-27) | only when scoped |
+| `agent_name` | string | `with_agent()` contextvar (CM-27) | only when scoped |
+| `exc_info` | string | when `logger.exception(...)` | only when present |
+| `stack_info` | string | when `stack_info=True` is passed | only when present |
+
+`request_id: "unknown"` is a real signal — some code path skipped
+`with_request_id()` at the inbound boundary; the field is intentionally
+emitted (not omitted) so KQL can search for those gaps.
+
+### PII masking (starter set)
+
+Applied via a `logging.Filter` BEFORE the JSON formatter, so masked text
+is what KQL ingests. **Not exhaustive** — supplement per-vendor as the
+data flows become real.
+
+| Pattern | Example input | Example output |
+|---------|---------------|----------------|
+| Email | `user@example.com` | `***@***.***` |
+| Phone (E.164 only) | `+919876543210` | `+***` |
+| Credit card (Luhn-pass) | `4111-1111-1111-1111` | `****-****-****-1111` |
+| API keys (`sk-…`, `pk_…`, `AKIA…`, `ASIA…`) | `sk-abcdef1234567890ABCDEF` | `***REDACTED-KEY***` |
+
+Known limitations:
+
+* Non-E.164 phone formats (`(555) 123-4567`, `+1 555-…`) are NOT matched.
+* Stack traces in `exc_info` may contain file paths or `repr()` of objects
+  with PII — the filter doesn't walk the rendered exception text.
+* Names, addresses, and other free-text PII are out of scope.
+
+If a category becomes a real concern, add a pattern to
+`agents/observability/pii.py` with a test in `test_pii.py`.
+
+### Joining logs to spans and Langfuse observations
+
+`request_id` is the single pivot across:
+
+* **Log lines** — emitted by this module on every record.
+* **OTel spans** — CM-21 sets `request_id` as a span attribute inside
+  `with_request_id()`.
+* **Langfuse observations** — CM-24's `observe_node` decorator binds
+  `request_id` as observation metadata.
+
+So a three-way join in KQL works the same way regardless of which surface
+the operator started in:
+
+```kusto
+// Find every log line for one tenant message
+AppTraces
+| where Properties.request_id == "req_a1b2c3d4e5f6"
+| project TimeGenerated, Message, Properties
+| order by TimeGenerated asc
+
+// Same request_id, on the spans side
+AppDependencies
+| where customDimensions.request_id == "req_a1b2c3d4e5f6"
+| order by timestamp asc
+```
+
 ## What comes next (forward references)
 
 * **CM-26** reuses these KQL queries as Azure Monitor alert rules
   (`Microsoft.Insights/scheduledQueryRules`) for cost-budget, latency
   SLO, and guardrail-trip alerting. Same queries, different surface.
-* **CM-27** adds structured JSON logging that reads `get_request_id()` so
-  log lines join spans by `request_id` in the App Insights query language.
-* **CM-28** is the first consumer of `langgraph_node_span` — the per-agent
-  error panel lights up the moment CM-28 lands.
+* **CM-28** is the first consumer of `langgraph_node_span` and
+  `with_agent()` — the per-agent error panel lights up the moment CM-28
+  lands, with `agent_name` flowing into log lines and Langfuse alike.
 * **CM-30** extends `tests/eval/triage_seed.jsonl` to 200 examples and
   runs the Triage Agent eval against the LangSmith dataset seeded
   in CM-23.

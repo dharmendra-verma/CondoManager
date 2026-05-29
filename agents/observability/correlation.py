@@ -1,6 +1,9 @@
-"""`request_id` correlation: ContextVar + OTel baggage + span attribute.
+"""`request_id` correlation: ContextVar + OTel baggage + span attribute,
+plus ``tenant_id`` and ``agent_name`` correlation contextvars for the
+JSON log formatter (CM-27).
 
-Jira: CM-21  | Epic: Observability  | Phase 0
+Jira: CM-21 (request_id)  | CM-27 (tenant_id + agent_name)
+Epic: Observability  | Phase 0
 
 Every inbound boundary (HTTP handler, queue consumer, scheduled job)
 must wrap its work in ``with_request_id()`` so that:
@@ -18,6 +21,12 @@ must wrap its work in ``with_request_id()`` so that:
 If a caller skips ``with_request_id`` and asks ``get_request_id()``, the
 default sentinel ``"unknown"`` is returned — never raises. That keeps
 spans well-formed even when correlation is misconfigured upstream.
+
+CM-27 adds ``tenant_id`` and ``agent_name`` as separate contextvars.
+They default to ``None`` rather than a sentinel because absence is the
+honest signal at most call sites (background jobs, init code) — the
+JSON log formatter omits the field entirely when unset, so log lines
+don't carry stale "tenant=None" noise.
 """
 
 from __future__ import annotations
@@ -38,6 +47,18 @@ UNKNOWN_REQUEST_ID: str = "unknown"
 _request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id",
     default=UNKNOWN_REQUEST_ID,
+)
+
+# CM-27: tenant + agent contextvars. Default ``None`` (not a sentinel) so the
+# JSON formatter can omit the field cleanly when no scope is active.
+_tenant_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "tenant_id",
+    default=None,
+)
+
+_agent_name_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "agent_name",
+    default=None,
 )
 
 
@@ -104,3 +125,63 @@ def with_request_id(request_id: str | None = None) -> Iterator[str]:
         # underlying machinery as ContextVar), then reset the var.
         context.detach(ctx_token)
         _request_id_var.reset(var_token)
+
+
+# ---------------------------------------------------------------------------
+# CM-27: tenant_id + agent_name correlation
+# ---------------------------------------------------------------------------
+
+
+def get_tenant_id() -> str | None:
+    """Return the current tenant_id, or ``None`` if no scope is active."""
+    return _tenant_id_var.get()
+
+
+def set_tenant_id(tenant_id: str | None) -> contextvars.Token[str | None]:
+    """Set the tenant_id directly. Prefer ``with_tenant`` when scoping is OK."""
+    return _tenant_id_var.set(tenant_id)
+
+
+def get_agent_name() -> str | None:
+    """Return the current agent_name, or ``None`` if no scope is active."""
+    return _agent_name_var.get()
+
+
+def set_agent_name(agent_name: str | None) -> contextvars.Token[str | None]:
+    """Set the agent_name directly. Prefer ``with_agent`` when scoping is OK."""
+    return _agent_name_var.set(agent_name)
+
+
+@contextmanager
+def with_tenant(tenant_id: str) -> Iterator[str]:
+    """Scope a tenant_id for the duration of the `with` block.
+
+    Used by inbound channel adapters (WhatsApp, Telegram, email) once they
+    identify which tenant owns the incoming message — wrap the downstream
+    work so logs and observations carry the tenant_id automatically.
+
+    Yields the tenant_id (convenient for the caller to echo).
+    """
+    token = _tenant_id_var.set(tenant_id)
+    try:
+        yield tenant_id
+    finally:
+        _tenant_id_var.reset(token)
+
+
+@contextmanager
+def with_agent(agent_name: str) -> Iterator[str]:
+    """Scope an agent_name for the duration of the `with` block.
+
+    LangGraph nodes use this to tag their work — combined with the
+    structured-logging filter, each log line is attributed to the
+    specific agent (``triage``, ``maintenance``, ``escalation``, …) that
+    produced it.
+
+    Yields the agent_name (convenient for the caller to echo).
+    """
+    token = _agent_name_var.set(agent_name)
+    try:
+        yield agent_name
+    finally:
+        _agent_name_var.reset(token)
