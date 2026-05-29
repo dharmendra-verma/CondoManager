@@ -85,7 +85,7 @@ def _luhn_ok(digits: str) -> bool:
     return total % 10 == 0
 
 
-def _mask_card(match: "re.Match[str]") -> str:
+def _mask_card(match: re.Match[str]) -> str:
     raw = match.group(0)
     digits = re.sub(r"\D", "", raw)
     if 13 <= len(digits) <= 19 and _luhn_ok(digits):

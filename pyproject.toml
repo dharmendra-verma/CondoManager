@@ -70,6 +70,18 @@ dependencies = [
   # via the CM-26 secretRef wiring). Coexists with App Insights — different
   # backend purpose (LLM cost/quality vs engineering observability).
   "langfuse>=2.40,<3",
+  # CM-28: LangGraph spine. `langgraph` is the StateGraph runtime; the
+  # `langgraph-checkpoint` package ships BaseCheckpointSaver + MemorySaver
+  # (production checkpointers like the Cosmos one in agents/orchestrator/
+  # extend BaseCheckpointSaver from this package). Pinned <1 — the 0.x
+  # train is stable through CM-32; a 1.0 bump needs its own story.
+  "langgraph>=0.2,<1",
+  "langgraph-checkpoint>=2,<3",
+  # CM-28: Azure Cosmos SDK. Used by CosmosCheckpointSaver to persist
+  # LangGraph checkpoints to the new `checkpoints` container (CM-17 db).
+  # DefaultAzureCredential routes through the CM-18 User-Assigned MI in
+  # prod; local dev uses az login.
+  "azure-cosmos>=4.7,<5",
 ]
 
 [project.optional-dependencies]

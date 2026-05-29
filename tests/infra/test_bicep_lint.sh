@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23 + CM-25 + CM-26
+# Bicep lint test — CM-15 + CM-16 + CM-17 + CM-18 + CM-19 + CM-20 + CM-22 + CM-23 + CM-25 + CM-26 + CM-28
 # Verifies:
 #   1. Bicep templates compile cleanly (no syntax/type errors)
 #   2. main.bicep is resource-group scoped (RG is bootstrapped out-of-band)
@@ -324,8 +324,8 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying cosmos.bicep declares all four required containers"
-REQUIRED_CONTAINERS=("tenants" "tickets" "conversations" "policies-vector")
+echo "▶  Verifying cosmos.bicep declares all five required containers (CM-28 adds 'checkpoints')"
+REQUIRED_CONTAINERS=("tenants" "tickets" "conversations" "policies-vector" "checkpoints")
 for c in "${REQUIRED_CONTAINERS[@]}"; do
   # Match the container resource id: `id: 'tenants'`, `id: 'policies-vector'`, …
   if grep -Eq "id:[[:space:]]+'$c'" "$COSMOS"; then
@@ -900,6 +900,62 @@ for rule in "alert-latency-slo" "alert-guardrail-trip" "alert-hallucination-spik
     FAIL=1
   fi
 done
+
+# ---------------------------------------------------------------------------
+# CM-28 — LangGraph spine (orchestrator package + checkpoints container +
+#         dual-side guardrail event-name regression with CM-26)
+# ---------------------------------------------------------------------------
+
+ORCH_DIR="$ROOT/agents/orchestrator"
+
+echo "▶  Verifying cosmos.bicep declares the 'checkpoints' container with a TTL (CM-28)"
+if grep -Eq "id:[[:space:]]+'checkpoints'" "$COSMOS" \
+   && grep -Eq "defaultTtl:[[:space:]]+[0-9]+" "$COSMOS"; then
+  echo "   ✓ checkpoints container with defaultTtl present"
+else
+  echo "   ✗ cosmos.bicep MISSING checkpoints container or defaultTtl — LangGraph state will not persist / not auto-purge"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM declares five sqlDatabases/containers (CM-28 adds the 5th)"
+CONTAINER_COUNT=$(grep -Fo "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers" /tmp/main.json | wc -l | tr -d ' ')
+if [ "$CONTAINER_COUNT" -ge 5 ]; then
+  echo "   ✓ compiled ARM has $CONTAINER_COUNT Cosmos container references (>=5)"
+else
+  echo "   ✗ compiled ARM has only $CONTAINER_COUNT Cosmos container references (expected >=5 after CM-28)"
+  FAIL=1
+fi
+
+echo "▶  Verifying agents/orchestrator/ package files exist (CM-28)"
+ORCH_FILES=("__init__.py" "state.py" "guardrails.py" "nodes.py" "graph.py" "checkpointer.py" "demo.py")
+for f in "${ORCH_FILES[@]}"; do
+  if [ -s "$ORCH_DIR/$f" ]; then
+    echo "   ✓ agents/orchestrator/$f present"
+  else
+    echo "   ✗ agents/orchestrator/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+# DUAL-SIDE REGRESSION (CM-26 <-> CM-28): the guardrail-trip span names
+# emitted by guardrails.py MUST literally match the customEvents names
+# in alert-rules.bicep. Renaming one without the other silently breaks
+# the cost-cap / loop-cap alerts.
+echo "▶  Verifying guardrails.py literally emits 'guardrail.cost_cap' (CM-26 dual-side regression)"
+if grep -Fq "guardrail.cost_cap" "$ORCH_DIR/guardrails.py"; then
+  echo "   ✓ 'guardrail.cost_cap' literal present in guardrails.py"
+else
+  echo "   ✗ guardrails.py MISSING 'guardrail.cost_cap' — CM-26 alert KQL will never match"
+  FAIL=1
+fi
+
+echo "▶  Verifying guardrails.py literally emits 'guardrail.loop_cap' (CM-26 dual-side regression)"
+if grep -Fq "guardrail.loop_cap" "$ORCH_DIR/guardrails.py"; then
+  echo "   ✓ 'guardrail.loop_cap' literal present in guardrails.py"
+else
+  echo "   ✗ guardrails.py MISSING 'guardrail.loop_cap' — CM-26 alert KQL will never match"
+  FAIL=1
+fi
 
 if [ $FAIL -ne 0 ]; then
   echo ""

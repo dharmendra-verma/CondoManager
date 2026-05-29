@@ -47,7 +47,7 @@ infra/
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
-│       ├── cosmos.bicep                      # Cosmos DB account + db + 4 containers (CM-17)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 5 containers (CM-17, +checkpoints in CM-28)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
@@ -67,7 +67,8 @@ infra/
     ├── seed-app-insights-secret.sh           # Post-deploy: populate KV with the AppI conn string (CM-22)
     └── seed-langsmith-dataset.py             # Post-deploy: upload tests/eval/triage_seed.jsonl to LangSmith (CM-23)
 agents/
-└── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21, AppI in CM-22, LangSmith in CM-23)
+├── observability/                            # OTel SDK + auto-instrumentation + request_id (CM-21, AppI in CM-22, LangSmith in CM-23)
+└── orchestrator/                             # LangGraph spine: AgentState + stub nodes + guardrails + Cosmos checkpointer (CM-28)
 .github/
 └── workflows/
     ├── build.yml                             # PR + push:main · per-area lint/what-if + summary comment (CM-19, + python area in CM-21)
@@ -77,11 +78,13 @@ tests/
 ├── infra/
 │   └── test_bicep_lint.sh                    # Bicep lint runs in CI on every PR touching infra
 ├── observability/                            # pytest suite for agents/observability/ (CM-21, + AppI in CM-22, + LangSmith in CM-23)
+├── orchestrator/                             # pytest suite for agents/orchestrator/ (CM-28)
 └── eval/                                     # Eval dataset fixtures — CM-30 extends triage_seed.jsonl to 200 (CM-23)
 docs/
 ├── INFRA.md                                  # this file
 ├── CICD.md                                   # CI/CD operator guide (CM-19)
-└── OBSERVABILITY.md                          # OTel + request_id + manual span helpers (CM-21, + AppI in CM-22, + LangSmith in CM-23)
+├── OBSERVABILITY.md                          # OTel + request_id + manual span helpers (CM-21, + AppI in CM-22, + LangSmith in CM-23)
+└── AGENTS.md                                 # LangGraph spine reference: AgentState, nodes, HITL contract, guardrails (CM-28)
 pyproject.toml                                # Python project metadata (CM-21)
 requirements-lock.txt                         # pinned transitive Python deps (CM-21)
 ```

@@ -47,7 +47,8 @@ from __future__ import annotations
 import functools
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from agents.observability.sdk import SECRET_PLACEHOLDER
 
@@ -57,7 +58,7 @@ if TYPE_CHECKING:  # pragma: no cover - import only for typing
 _log = logging.getLogger(__name__)
 
 # Module-level cache. Reset by `_reset_for_tests` in the test fixture.
-_client: "Langfuse | None" = None
+_client: Langfuse | None = None
 _initialized: bool = False
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -89,7 +90,7 @@ def is_langfuse_enabled() -> bool:
     )
 
 
-def init_langfuse() -> "Langfuse | None":
+def init_langfuse() -> Langfuse | None:
     """Construct (once) the Langfuse client. Returns None when disabled.
 
     Idempotent — subsequent calls return the cached instance, even

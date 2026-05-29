@@ -16,8 +16,7 @@ import logging
 from collections.abc import Generator
 
 import pytest
-
-from agents.observability import correlation, configure_logging
+from agents.observability import configure_logging, correlation
 from agents.observability import logging as obs_logging
 from agents.observability.logging import (
     JsonFormatter,
