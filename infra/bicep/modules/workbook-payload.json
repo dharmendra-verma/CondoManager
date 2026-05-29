@@ -1,0 +1,109 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# CondoManager Ops\n\n**Cost / latency / errors / HITL queue depth — CM-25.**\n\nMost panels will be empty until CM-28 (LangGraph spine) and CM-30 (Triage Agent) ship live LLM traffic. The schema below is the deployment contract — future stories drop spans into these panels automatically.\n\nCanonical KQL queries live in `docs/OBSERVABILITY.md`."
+      },
+      "name": "header"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p-time",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 }
+              ]
+            }
+          }
+        ]
+      },
+      "name": "time-range"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Coalesces openinference and OTel gen_ai semantic conventions for token + model.\n// Pricing table — update when adopting a new model.\nlet model_rates = datatable(model: string, prompt_per_token: real, completion_per_token: real) [\n    'gpt-4o-mini',  0.00000015, 0.00000060,\n    'gpt-4o',       0.00000250, 0.00001000,\n    'gpt-4-turbo',  0.00001000, 0.00003000\n];\ndependencies\n| where customDimensions['gen_ai.system'] == 'openai'\n    or customDimensions['openinference.span.kind'] == 'LLM'\n| extend\n    model = coalesce(\n        tostring(customDimensions['gen_ai.request.model']),\n        tostring(customDimensions['llm.model_name'])\n    ),\n    prompt_tokens = toint(coalesce(\n        customDimensions['gen_ai.usage.prompt_tokens'],\n        customDimensions['llm.token_count.prompt']\n    )),\n    completion_tokens = toint(coalesce(\n        customDimensions['gen_ai.usage.completion_tokens'],\n        customDimensions['llm.token_count.completion']\n    ))\n| join kind=leftouter (model_rates) on model\n| extend cost_usd =\n    (prompt_tokens * coalesce(prompt_per_token, 0.0))\n    + (completion_tokens * coalesce(completion_per_token, 0.0))\n| summarize daily_cost_usd = sum(cost_usd) by bin(timestamp, 1d)\n| order by timestamp asc",
+        "size": 1,
+        "title": "Cost per day (USD) — token-count × model-rate",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "cost-per-day"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Latency percentiles across FastAPI handlers (CM-21 OTel auto-instrumentation).\nrequests\n| where success in (true, false)\n| summarize\n    p50_ms = percentile(duration, 50),\n    p95_ms = percentile(duration, 95),\n    p99_ms = percentile(duration, 99)\n  by bin(timestamp, 5m), operation_Name\n| order by timestamp desc",
+        "size": 1,
+        "title": "Latency p50 / p95 / p99 (ms) — per operation",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "latency-percentiles"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// LangGraph nodes emit spans with a `langgraph.node` custom attribute (CM-21 contract).\n// Empty until CM-28+ ships agent traffic.\ndependencies\n| where isnotempty(tostring(customDimensions['langgraph.node']))\n| extend agent = tostring(customDimensions['langgraph.node'])\n| summarize\n    total = count(),\n    errors = countif(success == false)\n  by bin(timestamp, 1h), agent\n| extend error_rate_pct = todouble(errors) / total * 100.0\n| project timestamp, agent, error_rate_pct\n| order by timestamp desc",
+        "size": 1,
+        "title": "Error rate (%) per LangGraph node",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "error-rate-per-agent"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// Contract for the future HITL story: emit `hitl.queued` when a task is\n// pushed to a human reviewer, `hitl.resolved` when the reviewer signs off.\n// Depth = cumulative queued − cumulative resolved per 5m bucket.\ncustomEvents\n| where name in ('hitl.queued', 'hitl.resolved')\n| summarize\n    queued = countif(name == 'hitl.queued'),\n    resolved = countif(name == 'hitl.resolved')\n  by bin(timestamp, 5m)\n| order by timestamp asc\n| extend running_queued = row_cumsum(queued)\n| extend running_resolved = row_cumsum(resolved)\n| extend queue_depth = running_queued - running_resolved\n| project timestamp, queue_depth",
+        "size": 1,
+        "title": "HITL queue depth — cumulative queued − resolved",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "hitl-queue-depth"
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
