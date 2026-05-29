@@ -1,6 +1,7 @@
 """Shared Pydantic state for the LangGraph spine.
 
-Jira: CM-28  | Epic: CM-Epic 4 (LangGraph Orchestrator)  | Phase 0
+Jira: CM-28 (initial)  | CM-29 (Channel + NormalizedMessage typing)
+Epic: CM-Epic 4 (LangGraph Orchestrator)  | Phase 0
 
 LangGraph's idiomatic state is a ``TypedDict``; the CM-28 AC mandates
 Pydantic. We use a ``BaseModel`` and rely on the standard LangGraph
@@ -16,6 +17,11 @@ Every node body is expected to:
      ``ValidationError`` at merge time — see
      ``tests/orchestrator/test_state.py::test_merge_rejects_unknown_keys``.
 
+CM-29 took ownership of the ``Channel`` enum (now in
+``agents.channels.schema``) and tightened ``normalized`` from
+``dict[str, Any]`` to ``NormalizedMessage | None`` — the typed coupling
+the original CM-28 docstring anticipated.
+
 Future stories (CM-30/31/32) consume the same model; adding a field
 means editing this file + updating the consumer prompts + tests.
 """
@@ -27,15 +33,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
-class Channel(StrEnum):
-    """Inbound message channel — set at the orchestrator entry by CM-29."""
-
-    WHATSAPP = "whatsapp"
-    TELEGRAM = "telegram"
-    EMAIL = "email"
-    WEB = "web"
-    UNKNOWN = "unknown"
+# CM-29: Channel + NormalizedMessage now live in the channels package.
+# Re-imported here so any code doing ``from agents.orchestrator.state
+# import Channel`` (e.g. the orchestrator __init__'s re-export and the
+# CM-28 demo) keeps working — the name remains in this module's
+# namespace.
+from agents.channels.schema import Channel, NormalizedMessage
 
 
 class Intent(StrEnum):
@@ -78,7 +81,11 @@ class AgentState(BaseModel):
     request_id: str
     channel: Channel = Channel.UNKNOWN
     raw_message: str = ""
-    normalized: dict[str, Any] = Field(default_factory=dict)
+    # CM-29: tightened from ``dict[str, Any]`` (CM-28's interim shape)
+    # to the strongly-typed ``NormalizedMessage``. Default is ``None``
+    # (pre-normalization); the channel adapter sets it at the
+    # orchestrator entry — see ``agents/channels/web.py``.
+    normalized: NormalizedMessage | None = None
     intent: Intent | None = None
     urgency: Urgency | None = None
     tone: Tone | None = None
