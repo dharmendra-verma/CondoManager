@@ -129,17 +129,36 @@ falls back to a deterministic keyword heuristic when `OPENAI_API_KEY` is
 unset, preserving the original stub's routing (`"human"`/`"escalat"` →
 escalation, `"fix"`/`"broken"`/`"leak"` → maintenance, else → knowledge) so
 this hello-world spine stays testable offline. The spine topology is
-unchanged. CM-31 (maintenance) and CM-32 (escalation) remain stubs.
+unchanged. CM-31 (maintenance) remains a stub.
+
+### `escalation` is now a real agent (CM-32)
+
+The `escalation` node is the Escalation Manager Agent — see
+[`docs/ESCALATION.md`](ESCALATION.md). It sub-classifies the escalation
+(`repeat`/`service_failure`/`safety`/`communication_breakdown`/`multi_issue`/`legal`),
+raises a **semantic** `legal_risk` flag, persists an `EscalationRecord` to the
+Cosmos `escalations` container, posts a manager alert (Slack), and prepares an
+empathetic tenant draft that is **held** behind `hitl_review`. Like triage, it
+runs offline (`get_escalation_classifier()` → keyword heuristic with no key).
+The escalation result lives on its own `AgentState.escalation` field (the
+record must survive the `hitl_review` step, which overwrites `output`).
 
 ---
 
 ## 4. HITL `interrupt()` contract
 
-`hitl_review` calls LangGraph's `interrupt(...)` primitive. The pause
-payload (visible to the resumer) is:
+`hitl_review` calls LangGraph's `interrupt(...)` primitive. Since CM-32 the
+pause payload (visible to the resumer) carries the escalation review context:
 
 ```python
-{"reason": "stub-hitl-review", "draft": state.output.get("draft")}
+{
+    "reason": "escalation_review",
+    "category": state.escalation.category,   # e.g. "legal"
+    "legal_risk": state.escalation.legal_risk,
+    "severity": state.escalation.severity,   # "high" | "critical"
+    "draft": state.output.get("draft"),      # the held tenant reply
+    "manager_alert": state.escalation.manager_alert,
+}
 ```
 
 To resume after a human has approved:
@@ -153,10 +172,11 @@ graph.invoke(
 )
 ```
 
-The whatever-the-human-sent payload lands as
-`state.output["approved"]`, and `state.output["via"] == "hitl"` marks
-the path. CM-32 will replace `_guardrail_termination`'s minimal escalation
-draft with a real tenant-facing reply behind the same gate.
+The human payload lands as `state.output["approved"]`, `state.output["via"]
+== "hitl"` marks the path, and `state.output["sent"]` reflects the decision.
+**Legal gate (CM-32):** the draft is marked `sent` — and the record
+transitioned to `approved_sent` — **only** when `approved is True`. There is
+no auto-approve path, so a legal-flagged case is never sent without a human.
 
 ---
 

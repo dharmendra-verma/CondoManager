@@ -48,6 +48,10 @@ param secretNames array = [
   // via secretRef. seed-app-insights-secret.sh populates it from the deployment
   // output post-deploy; until then it sits as the CM-18 REPLACE-ME placeholder.
   'app-insights-connection-string'
+  // CM-32: Slack incoming-webhook URL for the Escalation Agent's manager
+  // alert. Mounted as SLACK_WEBHOOK_URL; the notifier falls back to logging
+  // while this is the REPLACE-ME placeholder, so dev/CI never POST.
+  'slack-webhook-url'
 ]
 
 var vaultName = 'kv-condomanager-${env}'

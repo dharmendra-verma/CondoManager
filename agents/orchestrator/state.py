@@ -29,7 +29,7 @@ means editing this file + updating the consumer prompts + tests.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -69,12 +69,60 @@ class Tone(StrEnum):
     URGENT = "urgent"
 
 
+class EscalationCategory(StrEnum):
+    """Sub-classification produced by the CM-32 Escalation Agent.
+
+    Lives here next to the other classification enums (rather than in
+    ``escalation.py``) so ``state.py`` has no import dependency on the
+    escalation module — :class:`EscalationRecord` below references it, and
+    ``escalation.py`` imports both back from here. Keeps the dependency
+    one-directional (escalation -> state, never the reverse).
+    """
+
+    REPEAT = "repeat"
+    SERVICE_FAILURE = "service_failure"
+    SAFETY = "safety"
+    COMMUNICATION_BREAKDOWN = "communication_breakdown"
+    MULTI_ISSUE = "multi_issue"
+    LEGAL = "legal"
+
+
+class EscalationRecord(BaseModel):
+    """Internal escalation record (CM-32 AC #3).
+
+    Built by the ``escalation`` node, persisted to the Cosmos
+    ``escalations`` container, and carried on :class:`AgentState` so it
+    survives the ``hitl_review`` step (which overwrites ``output``).
+    All fields are JSON-primitive so ``model_dump()`` upserts cleanly into
+    Cosmos. Downstream consumers: CM-36 Analytics, CM-37 portal.
+
+    ``status`` is the HITL lifecycle: ``pending_review`` at creation,
+    transitioned to ``approved_sent`` ONLY on explicit manager approval, or
+    ``rejected`` otherwise. ``tenant_draft`` is the empathetic reply held
+    behind the gate — nothing in CM-32 sends it; that is a follow-up story.
+    """
+
+    record_id: str
+    tenant_id: str
+    request_id: str
+    category: EscalationCategory
+    legal_risk: bool = False
+    severity: Literal["high", "critical"] = "high"
+    internal_summary: str = ""
+    manager_alert: str = ""
+    tenant_draft: str = ""
+    status: Literal["pending_review", "approved_sent", "rejected"] = "pending_review"
+    # Every escalation routes through HITL; legal_risk makes that mandatory
+    # (no auto-approve path exists — see hitl_review + the CM-32 legal gate).
+    hitl_required: bool = True
+
+
 class AgentState(BaseModel):
     """Shared Pydantic state passed between LangGraph nodes.
 
-    The 13 fields below match the CM-28 AC exactly; tests assert
-    presence + types. Counters default to 0 so the CM-26 Stop Rules
-    (cost cap $5, search cap 50) start at safe values.
+    14 fields: the original 13 from the CM-28 AC plus ``escalation``
+    (CM-32). Tests assert presence + types. Counters default to 0 so the
+    CM-26 Stop Rules (cost cap $5, search cap 50) start at safe values.
     """
 
     tenant_id: str
@@ -94,6 +142,11 @@ class AgentState(BaseModel):
     search_count: int = 0
     routes: list[str] = Field(default_factory=list)
     output: dict[str, Any] | None = None
+    # CM-32: the Escalation Agent's structured output. Its own field (not
+    # ``output``) because ``hitl_review`` overwrites ``output`` on resume,
+    # and the record must survive that step for the HITL gate + downstream
+    # consumers (CM-36/37). ``None`` until the escalation node runs.
+    escalation: EscalationRecord | None = None
 
     def merge(self, updates: dict[str, Any]) -> AgentState:
         """Return a new ``AgentState`` with the given field updates applied.

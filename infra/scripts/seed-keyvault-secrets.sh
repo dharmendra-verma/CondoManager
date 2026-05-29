@@ -56,6 +56,7 @@ SECRETS=(
   langfuse-secret-key
   cosmos-connection-string
   app-insights-connection-string
+  slack-webhook-url
 )
 
 PLACEHOLDER="REPLACE-ME"
