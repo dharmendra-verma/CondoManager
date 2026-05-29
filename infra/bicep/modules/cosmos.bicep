@@ -235,6 +235,30 @@ resource checkpointsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabase
   }
 }
 
+// CM-32: Escalation Agent internal records. One doc per escalation
+// (category, legal_risk, manager alert, held tenant draft, HITL status).
+// Partitioned by /tenantId like tickets/conversations; small docs on shared
+// throughput. NO defaultTtl — escalation records are an audit/compliance
+// surface (legal-flagged cases especially) and must not auto-purge.
+resource escalationsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'escalations'
+  properties: {
+    resource: {
+      id: 'escalations'
+      partitionKey: {
+        paths: [ '/tenantId' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+    }
+  }
+}
+
 // CM-34: knowledge-sync cursor store for the Google Drive → Cosmos sync job.
 // One small doc per sync source (id == source), holding the Drive Changes-API
 // startPageToken + a per-document content-hash map for delta detection. Tiny,

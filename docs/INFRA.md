@@ -47,7 +47,7 @@ infra/
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
-│       ├── cosmos.bicep                      # Cosmos DB account + db + 5 containers (CM-17, +checkpoints in CM-28)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 7 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
@@ -337,6 +337,7 @@ diffs the two name lists to prevent drift.
 | `langfuse-public-key`       | Langfuse UI (public, low-risk)                      | On project reset               |
 | `langfuse-secret-key`       | Langfuse UI                                         | Quarterly                      |
 | `cosmos-connection-string`  | `az cosmosdb keys list --type connection-strings`   | Primary ↔ secondary swap       |
+| `slack-webhook-url`         | Slack incoming-webhook (CM-32 manager alerts)       | On channel/app reconfig        |
 
 ### First-time setup after deploy
 

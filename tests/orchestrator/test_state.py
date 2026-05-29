@@ -30,6 +30,8 @@ def test_defaults_for_unset_fields() -> None:
     assert s.history == []
     assert s.routes == []
     assert s.output is None
+    # CM-32: escalation record defaults to None until the escalation node runs.
+    assert s.escalation is None
 
 
 def test_enum_validation() -> None:
@@ -74,8 +76,8 @@ def test_serialization_roundtrip() -> None:
     assert s2 == s
 
 
-def test_all_13_ac_fields_present() -> None:
-    """Regression — the AC lists 13 exact fields. Drift = AC miss."""
+def test_all_ac_fields_present() -> None:
+    """Regression — 13 CM-28 fields + ``escalation`` (CM-32) = 14 exact fields."""
     expected = {
         "tenant_id",
         "request_id",
@@ -90,5 +92,6 @@ def test_all_13_ac_fields_present() -> None:
         "search_count",
         "routes",
         "output",
+        "escalation",  # CM-32
     }
     assert set(AgentState.model_fields.keys()) == expected
