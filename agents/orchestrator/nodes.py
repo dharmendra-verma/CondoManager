@@ -106,14 +106,24 @@ def knowledge(state: AgentState) -> dict[str, Any]:
 
 
 def maintenance(state: AgentState) -> dict[str, Any]:
-    """Maintenance stub — CM-31 replaces with ticket lifecycle + dedup."""
+    """Maintenance node — ticket lifecycle + dedup (CM-31).
+
+    Delegates to :class:`agents.maintenance.MaintenanceAgent`, which detects
+    duplicates (same unit + similar issue within 7 days), creates a
+    priority-ranked ticket, sends an SOP-aligned tenant confirmation, and
+    notifies the manager on new tickets. The span + guardrail contract stays
+    here; all domain logic lives in the ``agents.maintenance`` package.
+    """
     with langgraph_node_span("maintenance", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
         if gate.tripped:
             return _guardrail_termination(gate.reason)
-        return {
-            "output": {"status": "ticket_stub", "ticket_id": "stub-ticket-0001"},
-        }
+        # Imported lazily so the orchestrator package has no import-time
+        # dependency on the maintenance package (keeps the spine importable
+        # in isolation, mirroring the rest of the codebase's seam style).
+        from agents.maintenance import MaintenanceAgent  # noqa: PLC0415
+
+        return MaintenanceAgent().handle(state)
 
 
 def escalation(state: AgentState) -> dict[str, Any]:
