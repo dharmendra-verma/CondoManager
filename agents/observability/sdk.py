@@ -196,7 +196,11 @@ def setup_tracer_provider(
         # BatchSpanProcessor; masking runs synchronously in on_end (export is
         # deferred to the batch worker), so attributes are masked before they
         # serialize. See docs/SECURITY.md for the batch-ordering note.
-        provider.add_span_processor(_pii_masking_processor())
+        # Guard: configure_azure_monitor may leave a ProxyTracerProvider (e.g.
+        # when mocked in tests, or if the distro no-ops), which has no
+        # add_span_processor — only attach when a real SDK provider is in place.
+        if isinstance(provider, TracerProvider):
+            provider.add_span_processor(_pii_masking_processor())
         _initialized = True
         return provider
 
