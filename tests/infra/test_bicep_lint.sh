@@ -1233,6 +1233,41 @@ else
   echo "   ✓ shape.ts code does not reference the PII field issue_text"
 fi
 
+# ---------------------------------------------------------------------------
+# CM-40 — GitHub Environments review posture (setup script drift guard)
+# ---------------------------------------------------------------------------
+
+GH_ENV_SH="$ROOT/infra/scripts/setup-github-environments.sh"
+
+echo "▶  Verifying setup-github-environments.sh exists (CM-40)"
+if [ -s "$GH_ENV_SH" ]; then
+  echo "   ✓ setup-github-environments.sh present"
+else
+  echo "   ✗ infra/scripts/setup-github-environments.sh missing or empty"
+  FAIL=1
+fi
+
+echo "▶  Verifying it configures both environments + a required reviewer (CM-40)"
+# Static guard (same style as the CM-18 secret-name-sync check): the script must
+# reference the dev + prod environments and set a required_reviewers rule on prod.
+if grep -Fq "environments/dev" "$GH_ENV_SH" \
+   && grep -Fq "environments/prod" "$GH_ENV_SH" \
+   && grep -Fq "required_reviewers" "$GH_ENV_SH" \
+   && grep -Fq '"reviewers"' "$GH_ENV_SH"; then
+  echo "   ✓ dev + prod configured; prod asserts required_reviewers"
+else
+  echo "   ✗ setup-github-environments.sh missing dev/prod env config or the required_reviewers assertion"
+  FAIL=1
+fi
+
+echo "▶  Verifying setup-github-environments.sh is syntactically valid (CM-40)"
+if bash -n "$GH_ENV_SH" 2>/dev/null; then
+  echo "   ✓ script parses (bash -n)"
+else
+  echo "   ✗ setup-github-environments.sh has a syntax error"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"
