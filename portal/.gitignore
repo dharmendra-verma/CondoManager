@@ -1,0 +1,5 @@
+# Portal build + dependency artifacts (CM-37). Lockfiles ARE committed.
+node_modules/
+dist/
+.vite/
+*.local

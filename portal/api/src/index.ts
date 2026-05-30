@@ -1,0 +1,46 @@
+// SWA managed Function: GET /api/ticket?code=TKT-XXXXXXXX (CM-37).
+// Validates the code, looks the ticket up, and returns the tenant-safe public
+// projection. Registered via the @azure/functions v4 programming model.
+
+import {
+  type HttpRequest,
+  type HttpResponseInit,
+  type InvocationContext,
+  app,
+} from "@azure/functions";
+
+import { lookupTicketByCode } from "./cosmos";
+import { toPublicTicket } from "./shape";
+
+const CODE_RE = /^TKT-[0-9A-F]{8}$/;
+
+export async function ticketHandler(
+  req: HttpRequest,
+  ctx: InvocationContext,
+): Promise<HttpResponseInit> {
+  const code = (req.query.get("code") ?? "").trim().toUpperCase();
+  if (!CODE_RE.test(code)) {
+    return { status: 400, jsonBody: { error: "invalid_code" } };
+  }
+
+  let doc: Record<string, unknown> | null;
+  try {
+    doc = await lookupTicketByCode(code);
+  } catch (err) {
+    ctx.error("ticket lookup failed", err);
+    return { status: 502, jsonBody: { error: "lookup_failed" } };
+  }
+
+  const ticket = doc ? toPublicTicket(doc) : null;
+  if (ticket === null) {
+    return { status: 404, jsonBody: { error: "not_found" } };
+  }
+  return { status: 200, jsonBody: ticket };
+}
+
+app.http("ticket", {
+  methods: ["GET"],
+  authLevel: "anonymous",
+  route: "ticket",
+  handler: ticketHandler,
+});

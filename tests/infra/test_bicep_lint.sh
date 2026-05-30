@@ -108,7 +108,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics" "static-web-app")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -131,7 +131,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep" "$MODULES_DIR/static-web-app.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -1168,6 +1168,69 @@ if grep -Fq "az provider register" "$OIDC_SH" \
 else
   echo "   ✗ setup-azure-oidc.sh missing 'az provider register' or the 'registrationState' wait"
   FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-37 — Tenant status portal (Static Web Apps Free + portal/ TS project)
+# ---------------------------------------------------------------------------
+
+SWA="$MODULES_DIR/static-web-app.bicep"
+PORTAL_DIR="$ROOT/portal"
+
+echo "▶  Verifying static-web-app.bicep defaults to the Free SKU (CM-37)"
+if grep -Eq "name:[[:space:]]*'Free'" "$SWA" && grep -Eq "tier:[[:space:]]*'Free'" "$SWA"; then
+  echo "   ✓ Free SKU declared (free-tier MVP constraint)"
+else
+  echo "   ✗ static-web-app.bicep does NOT pin the Free SKU"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the static-web-app module (CM-37)"
+if grep -Fq "modules/static-web-app.bicep" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ static-web-app module referenced"
+else
+  echo "   ✗ main.bicep does NOT reference modules/static-web-app.bicep"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains Microsoft.Web/staticSites (CM-37)"
+if grep -Fq "Microsoft.Web/staticSites" /tmp/main.json; then
+  echo "   ✓ Microsoft.Web/staticSites present in compiled ARM"
+else
+  echo "   ✗ Microsoft.Web/staticSites MISSING from compiled ARM"
+  FAIL=1
+fi
+
+echo "▶  Verifying portal/ project files exist (CM-37)"
+PORTAL_FILES=(
+  "package.json"
+  "index.html"
+  "staticwebapp.config.json"
+  "src/main.ts"
+  "src/ticket.ts"
+  "api/package.json"
+  "api/host.json"
+  "api/src/index.ts"
+  "api/src/shape.ts"
+)
+for f in "${PORTAL_FILES[@]}"; do
+  if [ -s "$PORTAL_DIR/$f" ]; then
+    echo "   ✓ portal/$f present"
+  else
+    echo "   ✗ portal/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying the portal API never returns PII (shape whitelist regression)"
+# The unauthenticated code lookup must not echo tenant PII. Strip comment lines
+# first (the file documents the banned fields in a // comment), then assert no
+# real reference to issue_text remains in the shaper code.
+if grep -vE '^[[:space:]]*(//|\*|/\*)' "$PORTAL_DIR/api/src/shape.ts" | grep -q "issue_text"; then
+  echo "   ✗ shape.ts code references issue_text — public projection may leak PII"
+  FAIL=1
+else
+  echo "   ✓ shape.ts code does not reference the PII field issue_text"
 fi
 
 if [ $FAIL -ne 0 ]; then

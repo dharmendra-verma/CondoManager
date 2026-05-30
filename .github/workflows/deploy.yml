@@ -28,6 +28,7 @@ on:
     branches: [ main ]
     paths:
       - 'infra/**'
+      - 'portal/**'
       - '.github/workflows/deploy.yml'
   release:
     types: [ published ]
@@ -81,6 +82,58 @@ jobs:
             echo ""
             echo "* Resource group: \`rg-condomanager\`"
             echo "* Deployment name: \`cm-rg-dev-${{ github.run_number }}\`"
+            echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-portal-dev:
+    name: Deploy portal → dev (SWA)
+    # CM-37: gated on a repo variable so `main` stays green until the operator
+    # provisions the Static Web App and sets PORTAL_DEPLOY_ENABLED=true.
+    # The SWA deployment token is fetched JUST-IN-TIME via OIDC az login
+    # (`az staticwebapp secrets list`) — no long-lived token secret is stored
+    # in the repo, keeping the CM-15 OIDC-only posture.
+    if: >-
+      vars.PORTAL_DEPLOY_ENABLED == 'true'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'dev')
+      )
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch SWA deployment token (via OIDC, not a stored secret)
+        id: swatoken
+        run: |
+          token=$(az staticwebapp secrets list \
+            --name swa-condomanager-dev \
+            --query "properties.apiKey" -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swatoken.outputs.token }}
+          action: upload
+          app_location: portal
+          api_location: portal/api
+          output_location: dist
+
+      - name: Write step summary
+        run: |
+          {
+            echo "### Deploy portal to dev — success"
+            echo ""
+            echo "* Static Web App: \`swa-condomanager-dev\`"
             echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
           } >> "$GITHUB_STEP_SUMMARY"
 
