@@ -50,6 +50,19 @@ def _router(state: AgentState) -> str:
     return state.routes[-1]
 
 
+def _vendor_router(state: AgentState) -> str:
+    """Route out of the ``vendor`` node (CM-35).
+
+    The vendor node sets ``routes[-1]`` to ``hitl_review`` when manager
+    approval is required, else ``vendor_done`` (auto-dispatched, no vendor,
+    duplicate pass-through, or a guardrail termination). Anything that is not
+    an explicit approval request ends the graph.
+    """
+    if state.routes and state.routes[-1] == "hitl_review":
+        return "hitl_review"
+    return "vendor_done"
+
+
 def _knowledge_router(state: AgentState) -> str:
     """Post-Knowledge edge — hand off to Maintenance on refusal, else END.
 
@@ -86,6 +99,7 @@ def build_graph(
     g.add_node("triage", nodes.triage)
     g.add_node("knowledge", nodes.knowledge)
     g.add_node("maintenance", nodes.maintenance)
+    g.add_node("vendor", nodes.vendor)
     g.add_node("escalation", nodes.escalation)
     g.add_node("hitl_review", nodes.hitl_review)
     g.add_node("guardrail_terminated", nodes.guardrail_terminated)
@@ -106,8 +120,13 @@ def build_graph(
         },
     )
 
-    # Downstream nodes. Knowledge is terminal when it answers, but routes to
-    # Maintenance when it refuses (CM-33 handoff) — hence a conditional edge.
+    # Downstream nodes — merged CM-33 Knowledge handoff + CM-35 Vendor flow:
+    #  * Knowledge answers terminally, but routes to Maintenance on refusal
+    #    (low confidence / nothing retrieved) via _knowledge_router.
+    #  * Maintenance flows into the Vendor Agent (CM-35); the vendor node either
+    #    ends (auto-dispatched / no vendor / duplicate pass-through) or routes to
+    #    the HITL gate for manager approval via _vendor_router.
+    #  * Escalation routes through HITL.
     g.add_conditional_edges(
         "knowledge",
         _knowledge_router,
@@ -116,7 +135,15 @@ def build_graph(
             END: END,
         },
     )
-    g.add_edge("maintenance", END)
+    g.add_edge("maintenance", "vendor")
+    g.add_conditional_edges(
+        "vendor",
+        _vendor_router,
+        {
+            "hitl_review": "hitl_review",
+            "vendor_done": END,
+        },
+    )
     g.add_edge("escalation", "hitl_review")
     g.add_edge("hitl_review", END)
     g.add_edge("guardrail_terminated", END)

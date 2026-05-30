@@ -99,10 +99,7 @@ def triage(state: AgentState) -> dict[str, Any]:
             return _guardrail_termination(gate.reason)
 
         history = get_history_provider().recent_tickets(state.tenant_id)
-        message = (
-            state.normalized.content if state.normalized is not None
-            else state.raw_message
-        )
+        message = state.normalized.content if state.normalized is not None else state.raw_message
         classifier = get_triage_classifier()
         result = classifier.classify(message, history)
 
@@ -194,6 +191,24 @@ def maintenance(state: AgentState) -> dict[str, Any]:
         from agents.maintenance import MaintenanceAgent  # noqa: PLC0415
 
         return MaintenanceAgent().handle(state)
+
+
+def vendor(state: AgentState) -> dict[str, Any]:
+    """Vendor node — match a contractor and auto-dispatch or seek approval (CM-35).
+
+    Runs after :func:`maintenance`. Delegates to
+    :class:`agents.vendor.VendorAgent`, which matches a vendor to the created
+    ticket and either auto-dispatches routine/low-cost/pre-approved/non-safety
+    jobs or routes to ``hitl_review`` for manager approval. Non-``ticket_created``
+    upstream outputs (duplicate / guardrail) pass straight through to END.
+    """
+    with langgraph_node_span("vendor", tenant_id=state.tenant_id):
+        gate = guardrails.check(state)
+        if gate.tripped:
+            return _guardrail_termination(gate.reason)
+        from agents.vendor import VendorAgent  # noqa: PLC0415
+
+        return VendorAgent().handle(state)
 
 
 def escalation(state: AgentState) -> dict[str, Any]:
@@ -300,7 +315,5 @@ def guardrail_terminated(state: AgentState) -> dict[str, Any]:
     The tripping node has already set ``state.output`` with the reason;
     we just need a span so the trace shows the termination clearly.
     """
-    with langgraph_node_span(
-        "guardrail_terminated", tenant_id=state.tenant_id
-    ):
+    with langgraph_node_span("guardrail_terminated", tenant_id=state.tenant_id):
         return {}
