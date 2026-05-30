@@ -1,0 +1,7 @@
+{"category": "plumbing", "expected_vendor_id": "v-plumb-2"}
+{"category": "electrical", "expected_vendor_id": "v-elec-1"}
+{"category": "hvac", "expected_vendor_id": "v-hvac-1"}
+{"category": "appliance", "expected_vendor_id": "v-appliance-1"}
+{"category": "structural", "expected_vendor_id": "v-struct-1"}
+{"category": "pest", "expected_vendor_id": "v-general-1"}
+{"category": "general", "expected_vendor_id": "v-general-1"}

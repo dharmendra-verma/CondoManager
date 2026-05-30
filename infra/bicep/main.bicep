@@ -281,6 +281,23 @@ module functions './modules/functions.bicep' = {
   }
 }
 
+// CM-36 — weekly Analytics & Forecasting digest job (Azure Functions Timer).
+// Dedicated Linux Consumption Function App (separate from gdrive-sync) so the
+// weekly schedule + failures are isolated. Reads tickets + escalations from
+// Cosmos via the shared MI; posts the digest to the slack-webhook-url KV ref.
+module analytics './modules/analytics.bicep' = {
+  name: 'analytics-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+    userAssignedIdentityId: managedIdentity.outputs.identityId
+    appInsightsConnectionString: appInsights.outputs.connectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+    keyVaultUri: keyvault.outputs.vaultUri
+  }
+}
+
 // CM-37 — Tenant status portal (read-only) on Azure Static Web Apps (Free).
 // Static SPA + managed Functions API (GET /api/ticket). No repo linkage —
 // code deploys via the SWA deployment token from deploy.yml; the API reads
@@ -374,6 +391,10 @@ output langsmithEnabled bool = langsmithEnabled
 output functionAppName string = functions.outputs.functionAppName
 output functionAppId string = functions.outputs.functionAppId
 output functionAppDefaultHostName string = functions.outputs.functionAppDefaultHostName
+
+// CM-36 — analytics digest Function App (used by the deploy step + smoke test).
+output analyticsFunctionAppName string = analytics.outputs.functionAppName
+output analyticsFunctionAppId string = analytics.outputs.functionAppId
 
 // CM-37 outputs — SWA name + hostname for the post-deploy token wiring +
 // the tenant-facing URL.

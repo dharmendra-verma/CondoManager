@@ -47,7 +47,7 @@ infra/
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
-│       ├── cosmos.bicep                      # Cosmos DB account + db + 7 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 8 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32; +digests CM-36)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
@@ -132,7 +132,8 @@ before running `az deployment group create --parameters env=prod` against `rg-co
 The bootstrap is captured in **`infra/scripts/setup-azure-oidc.sh`**. Run it
 once in Azure Cloud Shell on the account that owns the target subscription —
 the script is **idempotent**, so re-running it (e.g. after CM-43 added the
-new RG-scoped role grant) only applies what's missing.
+new RG-scoped role grant, or after CM-41 added provider registration) only
+applies what's missing.
 
 ```bash
 # In https://shell.azure.com (or any az-CLI environment with Owner / UAA on the sub)
@@ -146,13 +147,27 @@ What it does:
 | 1 | Create / reuse Azure AD app + service principal `github-condomanager-infra` |
 | 2 | Grant **`Contributor`** at **subscription scope** (broad deploy permissions) |
 | 3 | (CM-43) Grant **`User Access Administrator`** at **`rg-condomanager` scope** — needed because Bicep modules under `infra/bicep/modules/` declare `Microsoft.Authorization/roleAssignments` resources (e.g. `keyvault.bicep` grants the shared MI `Key Vault Secrets User`). `Contributor` does not include `roleAssignments/write`. UAA is scoped to the single RG to limit blast radius. |
-| 4 | Create / reuse 4 federated credentials (`github-main`, `github-pull-request`, `github-env-dev`, `github-env-prod`) — used by `build.yml` and `deploy.yml` for OIDC token exchange. |
-| 5 | Print the three public identifiers to paste into GitHub Actions secrets. |
+| 4 | (CM-41) **Register the Azure resource providers** every deploy needs (`Microsoft.Network`, `Microsoft.OperationalInsights`, `Microsoft.App`, `Microsoft.DocumentDB`, `Microsoft.KeyVault`, `Microsoft.ContainerRegistry`, `Microsoft.Insights`) and **wait** until each reaches `Registered` (≤ 5 min/provider). Idempotent — already-registered namespaces are skipped instantly. |
+| 5 | Create / reuse 4 federated credentials (`github-main`, `github-pull-request`, `github-env-dev`, `github-env-prod`) — used by `build.yml` and `deploy.yml` for OIDC token exchange. |
+| 6 | Print the three public identifiers to paste into GitHub Actions secrets. |
 
 > **Operator note for CM-43:** if you've already run this script before
 > CM-43 landed, re-run it once after this PR merges to pick up the new
 > `User Access Administrator` grant. Without it, `deploy.yml → deploy-dev`
 > fails with `Authorization failed ... 'Microsoft.Authorization/roleAssignments/write'`.
+
+> **Why the CI principal can't register providers itself (CM-41):**
+> `az provider register` is a **subscription-level** operation, but the GitHub
+> Actions service principal is deliberately scoped to `Contributor` on
+> `rg-condomanager` **only** (CM-15, to bound its blast radius). So the deploy
+> workflow cannot self-heal a missing provider — the first deploy of any new
+> resource type would fail with
+> `MissingSubscriptionRegistration: The subscription is not registered to use
+> namespace 'Microsoft.<X>'` (this is exactly how CM-16's first run died on
+> `Microsoft.Network`). Registering the providers here — once, at subscription
+> scope, as the owner — closes that gap without widening the CI principal's
+> permissions. Re-run this script after CM-41 merges to pick up any providers
+> your subscription hasn't registered yet.
 
 ### Required GitHub secrets
 
@@ -631,6 +646,25 @@ python infra/scripts/gdrive-sync-smoke-test.py
 
 A bootstrap run indexes one doc; an immediate re-run is asserted to be a clean
 idempotent no-op. Exit 0 == healthy.
+
+## Analytics digest job (CM-36)
+
+A second Azure Functions Timer app — **`func-condomanager-analytics-<env>`**
+(`infra/bicep/modules/analytics.bicep`, code in `functions/analytics-digest/`,
+logic in `agents/analytics/`) — runs **weekly** (Mondays 08:00 UTC). It reads
+the `tickets` (CM-31) and `escalations` (CM-32) containers, computes recurring
+issues / contractor scores / sentiment trend / predictive flags, writes a
+`WeeklyDigest` to the new **`digests`** container (partition `/tenantId`,
+90-day TTL — a rolling, rebuildable view for the CM-37 portal), and posts the
+digest to the manager Slack channel via the `slack-webhook-url` KV reference
+(no new secret). Same MI + KV-reference + out-of-band `func publish` model as
+the gdrive-sync app. Config: `COSMOS_ENDPOINT`, `SLACK_WEBHOOK_URL` (KV),
+`ANALYTICS_TENANT_ID` (default `default`), `ENVIRONMENT`.
+
+> Data-availability notes: contractor performance is scored over the ticket
+> `owner` (no Vendor entity / `resolved_at` yet — CM-35 + a schema add upgrade
+> it); sentiment is the escalation-volume proxy (tickets don't persist tone);
+> email delivery is a follow-up (Slack + the `digests` container today).
 
 ## Tenant status portal — Azure Static Web Apps (CM-37)
 

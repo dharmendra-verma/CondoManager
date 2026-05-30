@@ -1,0 +1,157 @@
+"""Chat model for grounded answer generation (CM-33).
+
+Jira: CM-33  | Epic: CM-Epic 6  | Phase 1
+
+Mirrors CM-30's ``get_triage_classifier()`` env-driven seam: production sets
+``OPENAI_API_KEY`` (sourced from Key Vault) and gets the real GPT-4o-mini
+:class:`LLMChatModel`; tests + the credential-free demo get a deterministic
+:class:`StubChatModel` so CI runs offline and the eval thresholds are
+reproducible.
+
+The model is asked for a strict structured output (:class:`RagModelOutput`):
+it must answer ONLY from the numbered context blocks, cite the blocks it used,
+and set ``can_answer=False`` when the answer isn't present — the hallucination
+control the AC requires.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from typing import Any, Protocol
+
+from pydantic import BaseModel, Field
+
+from agents.knowledge.models import SECRET_PLACEHOLDER
+from agents.knowledge.retrieval import significant_terms
+
+#: AC: GPT-4o-mini for speed/cost (same model the Triage agent uses).
+DEFAULT_KNOWLEDGE_MODEL = "gpt-4o-mini"
+
+# GPT-4o-mini per-token USD rates (same table as CM-30 triage + the CM-25
+# workbook). A RAG call carries a larger context than triage, so we bill a
+# higher flat estimate so the CM-26 cost cap stays meaningful.
+_PROMPT_PER_TOKEN = 0.00000015
+_COMPLETION_PER_TOKEN = 0.00000060
+LLM_ANSWER_COST_ESTIMATE_USD = (
+    1500 * _PROMPT_PER_TOKEN + 200 * _COMPLETION_PER_TOKEN
+)
+
+#: System prompt enforcing grounded, citation-bearing answers. ``{context}``
+#: is filled with the numbered ``[n]`` retrieved chunks per request.
+KNOWLEDGE_SYSTEM_PROMPT = """\
+You are the knowledge assistant for a condominium management platform. Answer \
+the tenant's question USING ONLY the numbered context passages below. Each \
+passage is prefixed with a bracketed number like [1].
+
+Rules:
+- Use ONLY facts stated in the context. Do NOT use outside knowledge or guess.
+- If the answer is not clearly supported by the context, set can_answer=false \
+and leave answer empty — do not fabricate.
+- When you can answer, write a concise, direct answer and list the passage \
+numbers you relied on in used_chunks (e.g. [2] -> 2).
+
+Context passages:
+{context}
+"""
+
+
+class RagModelOutput(BaseModel):
+    """Structured output the chat model is forced to emit."""
+
+    can_answer: bool
+    answer: str = ""
+    #: 1-based indices of the context passages the answer relied on.
+    used_chunks: list[int] = Field(default_factory=list)
+
+
+class ChatModel(Protocol):
+    """Grounded-answer generator over numbered context blocks."""
+
+    #: Estimated USD billed per :meth:`answer` call (0.0 for the offline stub).
+    cost_per_call_usd: float
+
+    def answer(self, question: str, context_blocks: list[str]) -> RagModelOutput:
+        """Answer ``question`` strictly from ``context_blocks`` (``"[n] text"``)."""
+        ...
+
+
+class LLMChatModel:
+    """Real GPT-4o-mini answerer with Pydantic-validated structured output."""
+
+    cost_per_call_usd: float = LLM_ANSWER_COST_ESTIMATE_USD
+
+    def __init__(
+        self, model: str = DEFAULT_KNOWLEDGE_MODEL, *, temperature: float = 0.0
+    ) -> None:
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
+
+        # Any-alias so mypy --strict doesn't couple us to the langchain-openai
+        # constructor / Runnable signatures.
+        chat_cls: Any = ChatOpenAI
+        self._llm: Any = chat_cls(
+            model=model, temperature=temperature
+        ).with_structured_output(RagModelOutput)
+
+    def answer(self, question: str, context_blocks: list[str]) -> RagModelOutput:
+        from langchain_core.messages import (  # noqa: PLC0415  (lazy by design)
+            HumanMessage,
+            SystemMessage,
+        )
+
+        context = "\n\n".join(context_blocks) if context_blocks else "(no context)"
+        messages = [
+            SystemMessage(content=KNOWLEDGE_SYSTEM_PROMPT.format(context=context)),
+            HumanMessage(content=question),
+        ]
+        result = self._llm.invoke(messages)
+        assert isinstance(result, RagModelOutput)
+        return result
+
+
+class StubChatModel:
+    """Deterministic offline answerer — the no-credentials / CI path.
+
+    Picks the context block with the most question-term overlap. If nothing
+    overlaps, it refuses (``can_answer=False``) — so the eval's hallucination
+    metric is exercised deterministically without a live model.
+    """
+
+    cost_per_call_usd: float = 0.0
+
+    def answer(self, question: str, context_blocks: list[str]) -> RagModelOutput:
+        terms = significant_terms(question)
+        best_idx = -1
+        best_overlap = 0
+        for i, block in enumerate(context_blocks):
+            lowered = block.lower()
+            overlap = sum(1 for t in terms if t in lowered)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_idx = i
+        if best_idx < 0 or best_overlap == 0:
+            return RagModelOutput(can_answer=False)
+        return RagModelOutput(
+            can_answer=True,
+            answer=_first_sentence(context_blocks[best_idx]),
+            used_chunks=[best_idx + 1],
+        )
+
+
+def _first_sentence(block: str) -> str:
+    """First sentence of a ``"[n] text"`` context block, label stripped."""
+    text = re.sub(r"^\s*\[\d+\]\s*", "", block).strip()
+    head = re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0]
+    return head.strip()
+
+
+def get_chat_model() -> ChatModel:
+    """Env-driven selector — real LLM when ``OPENAI_API_KEY`` set, else stub.
+
+    Same convention as CM-30's ``get_triage_classifier`` / CM-28's
+    ``get_checkpointer``; the ``REPLACE-ME`` placeholder counts as unset.
+    """
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if key and key != SECRET_PLACEHOLDER:
+        return LLMChatModel()
+    return StubChatModel()

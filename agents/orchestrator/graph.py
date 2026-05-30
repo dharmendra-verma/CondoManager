@@ -7,10 +7,13 @@ Topology::
     START
       |
       v
-    triage  -- (router on state.routes[-1]) -->  knowledge       --> END
+    triage  -- (router on state.routes[-1]) -->  knowledge -> END | maintenance
                                                  maintenance     --> END
                                                  escalation -> hitl_review -> END
                                                  guardrail_terminated      --> END
+
+CM-33: the Knowledge node answers terminally, but on refusal (low
+confidence) it routes to Maintenance via ``_knowledge_router``.
 
 The router reads ``state.routes[-1]`` to pick the next node. Each stub
 node appends its target route name (e.g. ``"knowledge"``) to
@@ -47,6 +50,31 @@ def _router(state: AgentState) -> str:
     return state.routes[-1]
 
 
+def _vendor_router(state: AgentState) -> str:
+    """Route out of the ``vendor`` node (CM-35).
+
+    The vendor node sets ``routes[-1]`` to ``hitl_review`` when manager
+    approval is required, else ``vendor_done`` (auto-dispatched, no vendor,
+    duplicate pass-through, or a guardrail termination). Anything that is not
+    an explicit approval request ends the graph.
+    """
+    if state.routes and state.routes[-1] == "hitl_review":
+        return "hitl_review"
+    return "vendor_done"
+
+
+def _knowledge_router(state: AgentState) -> str:
+    """Post-Knowledge edge — hand off to Maintenance on refusal, else END.
+
+    CM-33's Knowledge node appends ``"maintenance"`` to ``state.routes`` when
+    it refuses (confidence below threshold / nothing retrieved); otherwise the
+    answer is terminal.
+    """
+    if state.routes and state.routes[-1] == "maintenance":
+        return "maintenance"
+    return END
+
+
 def build_graph(
     checkpointer: BaseCheckpointSaver[str] | None = None,
 ) -> CompiledStateGraph[Any, Any, Any, Any]:
@@ -71,6 +99,7 @@ def build_graph(
     g.add_node("triage", nodes.triage)
     g.add_node("knowledge", nodes.knowledge)
     g.add_node("maintenance", nodes.maintenance)
+    g.add_node("vendor", nodes.vendor)
     g.add_node("escalation", nodes.escalation)
     g.add_node("hitl_review", nodes.hitl_review)
     g.add_node("guardrail_terminated", nodes.guardrail_terminated)
@@ -91,10 +120,30 @@ def build_graph(
         },
     )
 
-    # Downstream nodes — knowledge + maintenance are terminal in the
-    # hello-world shape. Escalation routes through HITL.
-    g.add_edge("knowledge", END)
-    g.add_edge("maintenance", END)
+    # Downstream nodes — merged CM-33 Knowledge handoff + CM-35 Vendor flow:
+    #  * Knowledge answers terminally, but routes to Maintenance on refusal
+    #    (low confidence / nothing retrieved) via _knowledge_router.
+    #  * Maintenance flows into the Vendor Agent (CM-35); the vendor node either
+    #    ends (auto-dispatched / no vendor / duplicate pass-through) or routes to
+    #    the HITL gate for manager approval via _vendor_router.
+    #  * Escalation routes through HITL.
+    g.add_conditional_edges(
+        "knowledge",
+        _knowledge_router,
+        {
+            "maintenance": "maintenance",
+            END: END,
+        },
+    )
+    g.add_edge("maintenance", "vendor")
+    g.add_conditional_edges(
+        "vendor",
+        _vendor_router,
+        {
+            "hitl_review": "hitl_review",
+            "vendor_done": END,
+        },
+    )
     g.add_edge("escalation", "hitl_review")
     g.add_edge("hitl_review", END)
     g.add_edge("guardrail_terminated", END)
