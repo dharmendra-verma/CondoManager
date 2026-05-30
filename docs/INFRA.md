@@ -674,6 +674,61 @@ the gdrive-sync app. Config: `COSMOS_ENDPOINT`, `SLACK_WEBHOOK_URL` (KV),
 > it); sentiment is the escalation-volume proxy (tickets don't persist tone);
 > email delivery is a follow-up (Slack + the `digests` container today).
 
+## Tenant status portal — Azure Static Web Apps (CM-37)
+
+A read-only portal where a tenant looks up their maintenance ticket by its
+confirmation code (`TKT-XXXXXXXX`) and sees a status timeline + ETA + assigned
+vendor. First portal story; lives in `portal/`.
+
+| Aspect          | Value                                                          |
+|-----------------|----------------------------------------------------------------|
+| Resource        | `swa-condomanager-<env>` — `Microsoft.Web/staticSites`, Free SKU |
+| Frontend        | Vite + vanilla TypeScript SPA (`portal/src`) → `portal/dist`    |
+| API             | SWA managed Functions, TypeScript (`portal/api`), `GET /api/ticket?code=` |
+| Data            | reads the CM-17 `tickets` container by `id` (cross-partition)   |
+| Auth            | none (code-only lookup); API returns a **non-PII** projection   |
+| Deploy          | SWA deployment token via `Azure/static-web-apps-deploy` (CI)    |
+
+### Architecture notes
+
+- **One TypeScript stack.** Frontend + the managed-Functions API are both
+  TS/Node (the first-class SWA Free runtime), tested with vitest. Pure logic
+  (`portal/src/ticket.ts`, `portal/api/src/shape.ts`) is unit-tested; the
+  DOM glue + Cosmos query are thin.
+- **Non-PII projection.** The lookup is unauthenticated, so
+  `toPublicTicket` whitelists only `id`, `status`, `eta`, `owner` (vendor),
+  `created_at`, `updated_at` — never `issue_text` / `unit` / `tenant_id`.
+- **Cosmos via connection string.** SWA Free managed Functions don't reliably
+  support Managed Identity (a Standard-tier feature), so the API reads a
+  `COSMOS_CONNECTION_STRING` **app setting** seeded from KV
+  `cosmos-connection-string`. The string lives only as an Azure app setting —
+  never in code/IaC. Upgrade to MI when the SWA moves to Standard.
+
+### One-time operator setup (out-of-band)
+
+1. **Deploy the infra** (`main.bicep`) — provisions `swa-condomanager-<env>`.
+2. **Set the Cosmos app setting** on the SWA (from KV `cosmos-connection-string`):
+   ```bash
+   az staticwebapp appsettings set --name swa-condomanager-dev \
+       --setting-names COSMOS_CONNECTION_STRING="<from kv>"
+   ```
+3. **Enable CI deploy:** set repo variable `PORTAL_DEPLOY_ENABLED=true`. Until
+   then the `deploy-portal-dev` job is skipped (keeps `main` green pre-setup).
+
+No deployment-token secret is stored: `deploy-portal-dev` logs in via OIDC
+(the CM-15 federated credentials) and fetches the SWA token just-in-time with
+`az staticwebapp secrets list`, preserving the repo's OIDC-only posture.
+
+### Local development
+
+```bash
+cd portal && npm ci && npm run dev          # SPA on :5173 (proxy /api in prod)
+cd portal/api && npm ci && npm start        # func host for the API
+```
+
+`npm run lint && npm test && npm run build` runs in CI's `portal` area for both
+the frontend and the API.
+
 ## Adding per-env resources in later stories
 
 Each new resource type gets its own module under `infra/bicep/modules/`,

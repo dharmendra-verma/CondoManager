@@ -36,6 +36,7 @@ jobs:
     outputs:
       infra: ${{ steps.filter.outputs.infra }}
       python: ${{ steps.filter.outputs.python }}
+      portal: ${{ steps.filter.outputs.portal }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -58,6 +59,10 @@ jobs:
               - 'requirements-lock.txt'
               - '.python-version'
               - '.github/workflows/build.yml'
+            portal:
+              - 'portal/**'
+              - '.github/workflows/build.yml'
+              - '.github/workflows/deploy.yml'
 
   lint-infra:
     name: Infra · Bicep lint + build
@@ -154,9 +159,44 @@ jobs:
       - name: pytest
         run: pytest -q
 
+  build-portal:
+    name: Portal · build + test
+    needs: detect
+    if: needs.detect.outputs.portal == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            portal/package-lock.json
+            portal/api/package-lock.json
+      - name: Frontend — install · lint · test · build
+        working-directory: portal
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+      - name: API — install · lint · test · build
+        working-directory: portal/api
+        run: |
+          npm ci
+          npm run lint
+          npm test
+          npm run build
+      - name: Upload portal build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: portal-dist
+          path: portal/dist
+          retention-days: 14
+
   summary:
     name: PR summary comment
-    needs: [ detect, lint-infra, what-if-infra, lint-python, test-python ]
+    needs: [ detect, lint-infra, what-if-infra, lint-python, test-python, build-portal ]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -168,10 +208,12 @@ jobs:
         env:
           INFRA_RAN: ${{ needs.detect.outputs.infra }}
           PYTHON_RAN: ${{ needs.detect.outputs.python }}
+          PORTAL_RAN: ${{ needs.detect.outputs.portal }}
           LINT_INFRA_RESULT: ${{ needs.lint-infra.result }}
           WHATIF_INFRA_RESULT: ${{ needs.what-if-infra.result }}
           LINT_PYTHON_RESULT: ${{ needs.lint-python.result }}
           TEST_PYTHON_RESULT: ${{ needs.test-python.result }}
+          BUILD_PORTAL_RESULT: ${{ needs.build-portal.result }}
         with:
           script: |
             const cell = (result, ran) => {
@@ -184,6 +226,7 @@ jobs:
             const env = process.env;
             const infraRan = env.INFRA_RAN === 'true';
             const pythonRan = env.PYTHON_RAN === 'true';
+            const portalRan = env.PORTAL_RAN === 'true';
             const lines = [
               '## CI summary',
               '',
@@ -193,8 +236,9 @@ jobs:
               `| Infra · what-if       | ${cell(env.WHATIF_INFRA_RESULT, infraRan)} |`,
               `| Python · ruff + mypy  | ${cell(env.LINT_PYTHON_RESULT, pythonRan)} |`,
               `| Python · pytest       | ${cell(env.TEST_PYTHON_RESULT, pythonRan)} |`,
+              `| Portal · build + test | ${cell(env.BUILD_PORTAL_RESULT, portalRan)} |`,
             ];
-            if (!infraRan && !pythonRan) {
+            if (!infraRan && !pythonRan && !portalRan) {
               lines.push('', '_No code paths touched — all area checks skipped._');
             }
             const sha = context.payload.pull_request.head.sha.slice(0, 7);

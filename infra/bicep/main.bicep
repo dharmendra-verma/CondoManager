@@ -314,6 +314,19 @@ module analytics './modules/analytics.bicep' = {
   }
 }
 
+// CM-37 — Tenant status portal (read-only) on Azure Static Web Apps (Free).
+// Static SPA + managed Functions API (GET /api/ticket). No repo linkage —
+// code deploys via the SWA deployment token from deploy.yml; the API reads
+// Cosmos via a COSMOS_CONNECTION_STRING app setting seeded post-deploy.
+module staticWebApp './modules/static-web-app.bicep' = {
+  name: 'swa-${env}'
+  params: {
+    env: env
+    location: location
+    tags: tagsModule.outputs.tags
+  }
+}
+
 // Azure Container Registry (Basic SKU) — destination for the curated Python
 // base image built by .github/workflows/base-image.yml. (CM-20)
 // The hello-world Container App still pulls from MCR; ACR's first consumers
@@ -399,5 +412,7 @@ output functionAppDefaultHostName string = functions.outputs.functionAppDefaultH
 output analyticsFunctionAppName string = analytics.outputs.functionAppName
 output analyticsFunctionAppId string = analytics.outputs.functionAppId
 
-// CM-38 — Cosmos data-plane RBAC assignment name (tooling discovery).
-output cosmosDataPlaneRoleAssignmentName string = cosmosRbac.outputs.roleAssignmentName
+// CM-37 outputs — SWA name + hostname for the post-deploy token wiring +
+// the tenant-facing URL.
+output staticWebAppName string = staticWebApp.outputs.staticWebAppName
+output staticWebAppDefaultHostname string = staticWebApp.outputs.defaultHostname
