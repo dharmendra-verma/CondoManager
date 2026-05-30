@@ -46,6 +46,15 @@ class EscalationStore(Protocol):
         """Return up to ``limit`` recent records for ``tenant_id`` (newest first)."""
         ...
 
+    def record_rating(self, record: EscalationRecord) -> None:
+        """Persist a HITL-rated ``record`` (CM-44), replacing the prior version.
+
+        ``record`` already carries the manager's decision (``status``) + optional
+        ``manager_rating`` / ``rating_comment`` / ``rated_at`` set by
+        ``hitl_review``. Idempotent by ``record_id`` so re-rating updates in place.
+        """
+        ...
+
 
 class NoopEscalationStore:
     """In-memory store — the offline / no-Cosmos fallback.
@@ -71,6 +80,19 @@ class NoopEscalationStore:
     def recent(self, tenant_id: str, *, limit: int = 10) -> list[EscalationRecord]:
         matches = [r for r in self._records if r.tenant_id == tenant_id]
         return list(reversed(matches))[:limit]
+
+    def record_rating(self, record: EscalationRecord) -> None:
+        # Replace any existing record with the same id (re-rating updates in
+        # place) so ``recent()`` reflects the rating without a duplicate row.
+        self._records = [r for r in self._records if r.record_id != record.record_id]
+        self._records.append(record)
+        _log.info(
+            "escalation rated (in-memory): id=%s tenant=%s status=%s rating=%s",
+            record.record_id,
+            record.tenant_id,
+            record.status,
+            record.manager_rating,
+        )
 
 
 class CosmosEscalationStore:
@@ -103,6 +125,11 @@ class CosmosEscalationStore:
             "tenantId": record.tenant_id,
         }
         self._container.upsert_item(doc)
+
+    def record_rating(self, record: EscalationRecord) -> None:
+        # ``upsert_item`` is idempotent by ``id``, so persisting the rated record
+        # updates the existing doc in place — no separate update path needed.
+        self.save(record)
 
     def recent(self, tenant_id: str, *, limit: int = 10) -> list[EscalationRecord]:
         query = (
