@@ -1268,6 +1268,67 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-42 — VectorDistance() cosine-semantics documentation + smoke-test fix
+#
+# Root cause: VectorDistance() returns a cosine *similarity* score (1.0 = identical),
+# not a 1−cos distance. These static guards keep the doc note + the corrected smoke
+# test + the inline cosmos.bicep note from drifting, and guard the one real
+# regression risk — someone "fixing" the bare ORDER BY into DESC, which would
+# invert ranking. The live smoke test can't run in CI (needs a Cosmos account).
+# (The production retrieval-side similarity inversion is tracked separately in CM-47.)
+# ---------------------------------------------------------------------------
+
+SMOKE_PY="$ROOT/infra/scripts/cosmos-smoke-test.py"
+INFRA_DOC="$ROOT/docs/INFRA.md"
+RAG_STORE="$ROOT/agents/knowledge/cosmos_store.py"
+
+echo "▶  Verifying cosmos.bicep documents VectorDistance similarity semantics (CM-42)"
+if grep -Fq "similarity score" "$COSMOS" && grep -Fq "CM-42" "$COSMOS"; then
+  echo "   ✓ cosmos.bicep carries the CM-42 VectorDistance semantics note"
+else
+  echo "   ✗ cosmos.bicep MISSING the CM-42 'similarity score' note beside distanceFunction"
+  FAIL=1
+fi
+
+echo "▶  Verifying docs/INFRA.md documents VectorDistance semantics (CM-42 AC #1)"
+if grep -Fq "VectorDistance semantics" "$INFRA_DOC" \
+   && grep -Fq "similarity score" "$INFRA_DOC"; then
+  echo "   ✓ docs/INFRA.md has the VectorDistance semantics section"
+else
+  echo "   ✗ docs/INFRA.md MISSING the 'VectorDistance semantics' section"
+  FAIL=1
+fi
+
+echo "▶  Verifying smoke test aliases the result as a similarity score (CM-42 AC #3)"
+# The misleading `AS distance` alias must be gone; the result is `AS score`.
+if grep -Fq "AS score" "$SMOKE_PY" && ! grep -Fq "AS distance" "$SMOKE_PY"; then
+  echo "   ✓ smoke test selects VectorDistance ... AS score (no stale 'AS distance')"
+else
+  echo "   ✗ smoke test still uses 'AS distance' or lost the 'AS score' alias"
+  FAIL=1
+fi
+
+echo "▶  Verifying smoke test asserts a high self-similarity (CM-42 AC #3)"
+if grep -Fq "0.99" "$SMOKE_PY"; then
+  echo "   ✓ smoke test asserts cosine self-similarity >= 0.99"
+else
+  echo "   ✗ smoke test no longer asserts the >= 0.99 self-similarity threshold"
+  FAIL=1
+fi
+
+echo "▶  Verifying no query orders VectorDistance DESC (CM-42 ranking-inversion guard)"
+# Bare ORDER BY VectorDistance(...) already ranks most-similar first for cosine.
+# A DESC would invert it. Guard the smoke test + the knowledge-retrieval SQL.
+DESC_HITS=$(grep -rEi "VectorDistance\([^)]*\)[[:space:]]+DESC" "$SMOKE_PY" "$RAG_STORE" 2>/dev/null || true)
+if [ -z "$DESC_HITS" ]; then
+  echo "   ✓ no 'ORDER BY VectorDistance(...) DESC' (ranking stays most-similar-first)"
+else
+  echo "   ✗ found a DESC-ordered VectorDistance query — inverts cosine ranking:"
+  printf "%s\n" "$DESC_HITS" | sed 's/^/       /'
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"
