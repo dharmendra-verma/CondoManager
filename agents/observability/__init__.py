@@ -39,16 +39,36 @@ from .correlation import (
 )
 from .instrumentation import register_auto_instrumentation
 from .logging import configure_logging
+from .metrics import (
+    METRIC_ACK_LATENCY,
+    METRIC_ESCALATION_LEGAL_FLAG,
+    METRIC_HITL_RATING,
+    METRIC_KNOWLEDGE_ANSWERED,
+    METRIC_KNOWLEDGE_REFUSED,
+    METRIC_TRIAGE_ROUTE,
+    METRIC_VENDOR_AUTO_DISPATCH,
+    METRIC_VENDOR_HITL,
+    emit_metric,
+)
 from .pii import mask_pii
 from .sdk import setup_tracer_provider
 from .spans import TRACER_NAME, langgraph_node_span
 
 __all__ = [
+    "METRIC_ACK_LATENCY",
+    "METRIC_ESCALATION_LEGAL_FLAG",
+    "METRIC_HITL_RATING",
+    "METRIC_KNOWLEDGE_ANSWERED",
+    "METRIC_KNOWLEDGE_REFUSED",
+    "METRIC_TRIAGE_ROUTE",
+    "METRIC_VENDOR_AUTO_DISPATCH",
+    "METRIC_VENDOR_HITL",
     "REQUEST_ID_KEY",
     "TRACER_NAME",
     "UNKNOWN_REQUEST_ID",
     "configure_logging",
     "configure_otel",
+    "emit_metric",
     "get_agent_name",
     "get_request_id",
     "get_tenant_id",
