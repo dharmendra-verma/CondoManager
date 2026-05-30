@@ -259,6 +259,22 @@ module cosmos './modules/cosmos.bicep' = {
   }
 }
 
+// CM-38 — Cosmos data-plane RBAC. Grants the shared MI the built-in Cosmos
+// "Data Contributor" role (scoped to the condomanager database) so workloads
+// authenticate to Cosmos via AAD/DefaultAzureCredential rather than account
+// keys. This is the Azure half of AC3; field-level restriction is enforced in
+// app code (agents/security/field_access.py). Depends on cosmos + managedIdentity.
+module cosmosRbac './modules/cosmos-rbac.bicep' = {
+  name: 'cosmos-rbac-${env}'
+  params: {
+    env: env
+    principalId: managedIdentity.outputs.principalId
+  }
+  // Explicit dependency: the role assignment references the account by name via
+  // `existing`, so Bicep can't infer it must wait for cosmos.bicep to create it.
+  dependsOn: [ cosmos ]
+}
+
 // CM-34 — Google Drive → Cosmos vector sync job (Azure Functions Timer).
 // Linux Consumption Python 3.12 Function App + dedicated storage. Attached to
 // the shared MI for Cosmos data-plane access + Key Vault reference resolution;
@@ -382,3 +398,6 @@ output functionAppDefaultHostName string = functions.outputs.functionAppDefaultH
 // CM-36 — analytics digest Function App (used by the deploy step + smoke test).
 output analyticsFunctionAppName string = analytics.outputs.functionAppName
 output analyticsFunctionAppId string = analytics.outputs.functionAppId
+
+// CM-38 — Cosmos data-plane RBAC assignment name (tooling discovery).
+output cosmosDataPlaneRoleAssignmentName string = cosmosRbac.outputs.roleAssignmentName

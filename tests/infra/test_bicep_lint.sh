@@ -108,7 +108,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "cosmos-rbac" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -131,7 +131,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/cosmos-rbac.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -1167,6 +1167,77 @@ if grep -Fq "az provider register" "$OIDC_SH" \
   echo "   ✓ provider register + registrationState wait present"
 else
   echo "   ✗ setup-azure-oidc.sh missing 'az provider register' or the 'registrationState' wait"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
+# CM-38 — PII detection/masking + audit logging (audit container + data-plane
+#         RBAC module + agents/security package)
+# ---------------------------------------------------------------------------
+
+COSMOS_RBAC="$MODULES_DIR/cosmos-rbac.bicep"
+SECURITY_PKG="$ROOT/agents/security"
+
+echo "▶  Verifying cosmos.bicep declares the 'audit' container that never expires (CM-38 AC4)"
+# defaultTtl: -1 = TTL enabled, no default expiry → audit records never auto-purge.
+if grep -Eq "id:[[:space:]]+'audit'" "$COSMOS" \
+   && grep -Eq "defaultTtl:[[:space:]]+-1" "$COSMOS"; then
+  echo "   ✓ audit container present with defaultTtl: -1 (never auto-purges)"
+else
+  echo "   ✗ cosmos.bicep MISSING the audit container or its defaultTtl: -1 — audit trail would expire"
+  FAIL=1
+fi
+
+echo "▶  Verifying cosmos-rbac.bicep grants the Cosmos Data Contributor data-plane role (CM-38 AC3)"
+# Built-in "Cosmos DB Data Contributor" role id + the sqlRoleAssignments type.
+if grep -Fq "00000000-0000-0000-0000-000000000002" "$COSMOS_RBAC" \
+   && grep -Fq "sqlRoleAssignments" "$COSMOS_RBAC"; then
+  echo "   ✓ data-plane Data Contributor role assignment present"
+else
+  echo "   ✗ cosmos-rbac.bicep MISSING the Data Contributor role id or sqlRoleAssignments resource"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the cosmos-rbac module with the MI principalId (CM-38 AC3)"
+if grep -Fq "modules/cosmos-rbac.bicep" "$BICEP_DIR/main.bicep" \
+   && grep -Fq "principalId: managedIdentity.outputs.principalId" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ cosmos-rbac wired with managedIdentity.outputs.principalId"
+else
+  echo "   ✗ main.bicep does NOT wire cosmos-rbac with the MI principalId"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments (CM-38)"
+if grep -Fq "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments" /tmp/main.json; then
+  echo "   ✓ sqlRoleAssignments present in compiled ARM"
+else
+  echo "   ✗ sqlRoleAssignments MISSING from compiled ARM — data-plane RBAC not deployed"
+  FAIL=1
+fi
+
+echo "▶  Verifying agents/security/ package files exist (CM-38)"
+SECURITY_FILES=("__init__.py" "models.py" "detection.py" "masking.py" "field_access.py" "audit.py" "retention.py")
+for f in "${SECURITY_FILES[@]}"; do
+  if [ -s "$SECURITY_PKG/$f" ]; then
+    echo "   ✓ agents/security/$f present"
+  else
+    echo "   ✗ agents/security/$f MISSING or empty"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying tests/eval/security_pii_seed.jsonl exists and is non-empty (CM-38 AC1)"
+PII_SEED="$ROOT/tests/eval/security_pii_seed.jsonl"
+if [ -s "$PII_SEED" ]; then
+  SEED_COUNT=$(grep -c . "$PII_SEED" || true)
+  if [ "$SEED_COUNT" -ge 10 ]; then
+    echo "   ✓ security_pii_seed.jsonl present with $SEED_COUNT examples"
+  else
+    echo "   ✗ security_pii_seed.jsonl has only $SEED_COUNT examples (expected >=10)"
+    FAIL=1
+  fi
+else
+  echo "   ✗ tests/eval/security_pii_seed.jsonl missing"
   FAIL=1
 fi
 

@@ -47,7 +47,8 @@ infra/
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
-│       ├── cosmos.bicep                      # Cosmos DB account + db + 8 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32; +digests CM-36)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 9 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32; +digests CM-36; +audit CM-38)
+│       ├── cosmos-rbac.bicep                 # Cosmos data-plane RBAC for the shared MI (CM-38)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
@@ -272,6 +273,13 @@ and RAG vector embeddings.
 | `tickets`         | `/tenantId`    | Tenant-scoped ticket queries stay single-part. |
 | `conversations`   | `/ticketId`    | All messages for a ticket live in one partition|
 | `policies-vector` | `/tenantId`    | RAG embeddings + DiskANN index on `/embedding` |
+| `audit`           | `/tenantId`    | CM-38 immutable audit trail; `defaultTtl: -1` (never expires) |
+
+> Other containers — `checkpoints` (CM-28), `escalations` (CM-32),
+> `knowledge_sync` (CM-34), `digests` (CM-36) — are documented inline in
+> `cosmos.bicep`. Data-plane access for all of them is granted to the shared MI
+> by `modules/cosmos-rbac.bicep` (CM-38); see `docs/SECURITY.md` for the PII,
+> field-level access, audit, and retention controls.
 
 ### Vector search
 

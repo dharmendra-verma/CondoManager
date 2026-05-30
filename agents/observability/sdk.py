@@ -39,7 +39,7 @@ import os
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     ConsoleSpanExporter,
@@ -93,6 +93,18 @@ def _sampler_from_env() -> Sampler:
     if ratio >= 1.0:
         return ParentBased(root=ALWAYS_ON)
     return ParentBased(root=TraceIdRatioBased(ratio))
+
+
+def _pii_masking_processor() -> SpanProcessor:
+    """Build the CM-38 trace-layer PII-masking span processor.
+
+    Imported lazily from ``agents.security`` so the observability package has no
+    import-time dependency on the security package (keeps the layering one-way:
+    security depends on observability, not the reverse).
+    """
+    from agents.security.masking import PiiMaskingSpanProcessor  # noqa: PLC0415
+
+    return PiiMaskingSpanProcessor()
 
 
 def _select_exporter() -> SpanExporter:
@@ -179,6 +191,12 @@ def setup_tracer_provider(
         provider = _setup_azure_monitor(
             service_name=service_name, environment=environment
         )
+        # CM-38 AC2: attach the PII masker to the distro-managed provider too,
+        # so prod App Insights spans are masked. The distro already added its
+        # BatchSpanProcessor; masking runs synchronously in on_end (export is
+        # deferred to the batch worker), so attributes are masked before they
+        # serialize. See docs/SECURITY.md for the batch-ordering note.
+        provider.add_span_processor(_pii_masking_processor())
         _initialized = True
         return provider
 
@@ -191,6 +209,9 @@ def setup_tracer_provider(
         }
     )
     provider = TracerProvider(resource=resource, sampler=_sampler_from_env())
+    # CM-38 AC2: mask string span attributes BEFORE export. Registered first so
+    # its synchronous on_end runs ahead of the exporting processor's on_end.
+    provider.add_span_processor(_pii_masking_processor())
     exporter = _select_exporter()
     processor_cls = SimpleSpanProcessor if sync else BatchSpanProcessor
     provider.add_span_processor(processor_cls(exporter))

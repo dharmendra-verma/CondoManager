@@ -106,6 +106,14 @@ gdrive = [
   "google-api-python-client>=2.100,<3",
   "google-auth>=2.35,<3",
 ]
+# CM-38: Azure AI Language client for the rich PII detector
+# (agents/security/detection.py::AzureLanguagePiiDetector). OPTIONAL, deploy-time
+# only — the detector is lazy-imported and only reached when AI_LANGUAGE_ENDPOINT
+# is set. CI + local tests run the offline RegexPiiDetector, so this stays out of
+# the base runtime and requirements-lock.txt (same pattern as the gdrive extra).
+security = [
+  "azure-ai-textanalytics>=5.3,<6",
+]
 
 [tool.setuptools.packages.find]
 include = ["agents*"]
@@ -151,6 +159,8 @@ module = [
   "google.*",
   "googleapiclient.*",
   "langchain_text_splitters.*",
+  # CM-38: optional `security` extra, not installed in CI (lazy-imported).
+  "azure.ai.textanalytics",
 ]
 ignore_missing_imports = true
 
