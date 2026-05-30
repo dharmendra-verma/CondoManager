@@ -192,6 +192,11 @@ resource policiesVectorContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatab
             path: vectorPath
             dataType: 'float32'
             dimensions: vectorDimensions
+            // CM-42: with 'cosine', VectorDistance() returns a *similarity score*
+            // (despite the name), in [-1, 1] where 1.0 = identical and 0 =
+            // orthogonal — NOT a 1−cos distance. Query with a bare
+            // `ORDER BY VectorDistance(...)` (most-similar first); never add DESC.
+            // See docs/INFRA.md "VectorDistance semantics".
             distanceFunction: 'cosine'
           }
         ]

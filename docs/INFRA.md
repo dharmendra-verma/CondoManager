@@ -339,6 +339,49 @@ Default embedding dimensions: **1536** (matches OpenAI
 for `text-embedding-3-large` by overriding `cosmosVectorDimensions` in
 `main.parameters.json`.
 
+#### VectorDistance semantics (CM-42)
+
+> **Despite its name, `VectorDistance()` returns a *similarity score*, not a
+> distance.** This caught us out during the CM-17 smoke test, which logged
+> `distance=1` for an identical-vector self-query and looked wrong (a cosine
+> *distance* would be `≈ 0`). It is correct.
+
+Per the [Microsoft reference][vdist], `VectorDistance()` *"returns the similarity
+score between two specified vectors."* For our `cosine` distance function the
+score is in **`[-1, 1]`** where:
+
+| Vectors | cosine score |
+|---|---|
+| identical | **`1.0`** (the smoke test's "`distance=1`") |
+| orthogonal | `0` |
+| opposite | `-1` |
+
+Higher = more similar. Consequences for every query against `policies-vector`:
+
+- **Always order with a *bare* `ORDER BY VectorDistance(c.embedding, @qv)`** — no
+  `ASC`/`DESC`. Cosmos reads the metric from the index and ranks **most-similar
+  first** automatically. Adding `DESC` would *invert* the ranking and return the
+  least-similar rows. (The CM-17 smoke test and the CM-33 knowledge-retrieval
+  query both already do this correctly.)
+- A `WHERE VectorDistance(...) > <threshold>` filter keeps the *most* similar
+  rows for cosine (high score = close), the opposite of a distance threshold.
+
+> ⚠️ **Known bug ([CM-47]):** the CM-33 Knowledge Agent retrieval path
+> (`agents/knowledge/retrieval.py`) currently converts this score with
+> `similarity = 1 − VectorDistance`, which **inverts** it (a perfect match scores
+> `0` and gets refused). The `ORDER BY` is fine; only the similarity arithmetic is
+> wrong. Tracked + fixed under CM-47 (its test fakes encode the same inversion, so
+> CI is green). CM-42 documents the semantics and fixes the smoke test; the
+> production retrieval fix is CM-47.
+
+CM-42 ruled out the other hypotheses: the `1.0` is deterministic (not DiskANN
+index lag — no wait/retry needed), and `float32` narrowing/zero-norm don't apply
+to an identical-vector self-query. The smoke test now asserts the self-similarity
+is `>= 0.99` (tolerating `float32` narrowing) instead of ignoring the value.
+
+[vdist]: https://learn.microsoft.com/azure/cosmos-db/nosql/query/vectordistance
+[CM-47]: https://projecttracking.atlassian.net/browse/CM-47
+
 ### Post-deploy smoke-test
 
 `infra/scripts/cosmos-smoke-test.py` validates AC #4 ("Sample insert +
@@ -363,8 +406,10 @@ python infra/scripts/cosmos-smoke-test.py
 ```
 
 The script inserts a dummy 1536-dim vector, queries it back with
-`VectorDistance()`, asserts the inserted doc is the nearest neighbour,
-and cleans up. Exit 0 means the account is wired correctly.
+`VectorDistance()`, asserts the inserted doc is the nearest neighbour
+**and that its cosine similarity is `≈ 1.0` (`>= 0.99`)** (see
+[VectorDistance semantics](#vectordistance-semantics-cm-42) above), then
+cleans up. Exit 0 means the account is wired correctly.
 
 ## Key Vault & Managed Identity (CM-18)
 
