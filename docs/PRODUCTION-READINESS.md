@@ -43,9 +43,14 @@ Legend: ✅ done in CM-39 · ◐ partial · ⏳ follow-up sub-task (see §5).
 
 The `hitl_review` interrupt (CM-32) is the capture point: when a manager
 approves/rejects an escalation draft, the decision + optional rating/comment is
-recorded and an `metric.hitl.rating` event emitted, so approval rate and
-reviewer load are dashboardable. **Status: ⏳ follow-up sub-task** (CM-39 ships
-the event name + the persistence seam; wiring the resume handler is split out).
+recorded and a `metric.hitl.rating` event emitted, so approval rate and
+reviewer load are dashboardable. **Status: ✅ implemented (CM-44).** On resume,
+`hitl_review` reads the optional `rating` (positive int) + `comment` from the
+payload, stamps `rated_at`, persists them onto the reused `escalations` record
+via `EscalationStore.record_rating(...)`, and emits `metric.hitl.rating`
+(`value` = the rating or `1.0`; attrs `decision` ∈ {approve, reject},
+`category`, `legal_risk`, `has_rating`). A bare-bool resume records no rating but
+still emits the decision so approval rate is always measurable.
 
 ## 4. Dashboards
 
@@ -64,8 +69,9 @@ than as a sprawling under-tested change:
 - **Metric wiring breadth** — emit `metric.maintenance.dedup`,
   `metric.vendor.{auto_dispatch,hitl}`, `metric.escalation.legal_flag`, and
   `metric.ack_latency_ms` at the remaining decision/entry points + tests.
-- **HITL ratings persistence** — record manager `hitl_review` decisions to the
-  `escalations` store + emit `metric.hitl.rating`.
+- **HITL ratings persistence** — ✅ done (CM-44): `hitl_review` records manager
+  decisions + optional rating/comment to the `escalations` store and emits
+  `metric.hitl.rating`.
 - **Dashboards** — add the PRD-metrics workbook panel group + the Langfuse
   dashboards; generalize `seed-langsmith-dataset.py` to all 5 datasets.
 - **Outcome metrics baselines** — TTM, follow-up reduction, efficiency gain

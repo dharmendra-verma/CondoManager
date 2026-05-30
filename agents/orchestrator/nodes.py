@@ -24,6 +24,7 @@ preserving the original stub's keyword routing.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -39,6 +40,7 @@ from agents.knowledge import (
 )
 from agents.knowledge.rag import REFUSAL_TEXT
 from agents.observability import (
+    METRIC_HITL_RATING,
     METRIC_KNOWLEDGE_ANSWERED,
     METRIC_KNOWLEDGE_REFUSED,
     METRIC_TRIAGE_ROUTE,
@@ -317,13 +319,45 @@ def hitl_review(state: AgentState) -> dict[str, Any]:
             if isinstance(approval, dict)
             else approval is True
         )
+        # CM-44: capture the manager's optional rating + comment from the resume
+        # payload. A bare-bool resume carries neither (rating stays None) but the
+        # decision is still recorded + measured. ``manager_rating`` counts only
+        # when it's a positive int (``bool`` is an ``int`` subclass — exclude it).
+        rating: int | None = None
+        comment = ""
+        if isinstance(approval, dict):
+            raw_rating = approval.get("rating")
+            if isinstance(raw_rating, int) and not isinstance(raw_rating, bool) and raw_rating > 0:
+                rating = raw_rating
+            raw_comment = approval.get("comment")
+            if isinstance(raw_comment, str):
+                comment = raw_comment
+
         updates: dict[str, Any] = {
             "output": {"approved": approval, "via": "hitl", "sent": approved},
         }
         if rec is not None:
-            updates["escalation"] = rec.model_copy(
-                update={"status": "approved_sent" if approved else "rejected"}
+            decision = "approve" if approved else "reject"
+            rated = rec.model_copy(
+                update={
+                    "status": "approved_sent" if approved else "rejected",
+                    "manager_rating": rating,
+                    "rating_comment": comment,
+                    "rated_at": datetime.now(UTC).isoformat(),
+                }
             )
+            # Persist the post-decision record (reuse the escalations container)
+            # and emit the HITL feedback signal for the dashboards (CM-45).
+            get_escalation_store().record_rating(rated)
+            emit_metric(
+                METRIC_HITL_RATING,
+                value=float(rating) if rating is not None else 1.0,
+                decision=decision,
+                category=rec.category.value,
+                legal_risk=rec.legal_risk,
+                has_rating=rating is not None,
+            )
+            updates["escalation"] = rated
         return updates
 
 
