@@ -137,8 +137,9 @@ class RetrievedChunk(BaseModel):
 
     ``score`` is the fused Reciprocal-Rank-Fusion score (higher = better
     rank across the vector + keyword lists). ``similarity`` is the vector
-    cosine similarity (``1 - VectorDistance``, clamped to [0, 1]) of the
-    chunk to the query — it drives the answer confidence.
+    cosine similarity — the raw ``VectorDistance`` cosine score (``1.0`` =
+    identical), clamped to [0, 1] — of the chunk to the query; it drives the
+    answer confidence.
     """
 
     chunk: VectorChunk

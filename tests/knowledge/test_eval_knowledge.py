@@ -36,8 +36,9 @@ class _LexicalRetriever:
     """Deterministic double playing BOTH ``Embedder`` and ``SearchStore``.
 
     ``embed`` captures the question's significant terms; ``search_chunks``
-    scores each KB chunk by query-term recall (distance = 1 - recall), so a
-    chunk that contains every question term ranks first with similarity 1.0.
+    scores each KB chunk by query-term recall used directly as the cosine
+    similarity (CM-47: VectorDistance returns a similarity, 1.0 = identical),
+    so a chunk containing every question term ranks first with similarity 1.0.
     Off-topic questions get similarity 0 everywhere → the RAG layer refuses.
     """
 
@@ -57,8 +58,9 @@ class _LexicalRetriever:
         for chunk in self._kb:
             chunk_terms = set(significant_terms(chunk.text))
             recall = len(q & chunk_terms) / len(q) if q else 0.0
-            scored.append((chunk, 1.0 - recall))
-        scored.sort(key=lambda pair: pair[1])
+            scored.append((chunk, recall))  # recall == cosine similarity here
+        # Most-similar first (search_chunks contract), i.e. descending score.
+        scored.sort(key=lambda pair: pair[1], reverse=True)
         return scored[:top_k]
 
     def keyword_search(
