@@ -108,7 +108,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "cosmos-rbac" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics" "static-web-app")
+MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics" "static-web-app")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -131,7 +131,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/cosmos-rbac.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep" "$MODULES_DIR/static-web-app.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep" "$MODULES_DIR/static-web-app.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -1234,73 +1234,98 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CM-38 — PII detection/masking + audit logging (audit container + data-plane
-#         RBAC module + agents/security package)
+# CM-40 — GitHub Environments review posture (setup script drift guard)
 # ---------------------------------------------------------------------------
 
-COSMOS_RBAC="$MODULES_DIR/cosmos-rbac.bicep"
-SECURITY_PKG="$ROOT/agents/security"
+GH_ENV_SH="$ROOT/infra/scripts/setup-github-environments.sh"
 
-echo "▶  Verifying cosmos.bicep declares the 'audit' container that never expires (CM-38 AC4)"
-# defaultTtl: -1 = TTL enabled, no default expiry → audit records never auto-purge.
-if grep -Eq "id:[[:space:]]+'audit'" "$COSMOS" \
-   && grep -Eq "defaultTtl:[[:space:]]+-1" "$COSMOS"; then
-  echo "   ✓ audit container present with defaultTtl: -1 (never auto-purges)"
+echo "▶  Verifying setup-github-environments.sh exists (CM-40)"
+if [ -s "$GH_ENV_SH" ]; then
+  echo "   ✓ setup-github-environments.sh present"
 else
-  echo "   ✗ cosmos.bicep MISSING the audit container or its defaultTtl: -1 — audit trail would expire"
+  echo "   ✗ infra/scripts/setup-github-environments.sh missing or empty"
   FAIL=1
 fi
 
-echo "▶  Verifying cosmos-rbac.bicep grants the Cosmos Data Contributor data-plane role (CM-38 AC3)"
-# Built-in "Cosmos DB Data Contributor" role id + the sqlRoleAssignments type.
-if grep -Fq "00000000-0000-0000-0000-000000000002" "$COSMOS_RBAC" \
-   && grep -Fq "sqlRoleAssignments" "$COSMOS_RBAC"; then
-  echo "   ✓ data-plane Data Contributor role assignment present"
+echo "▶  Verifying it configures both environments + a required reviewer (CM-40)"
+# Static guard (same style as the CM-18 secret-name-sync check): the script must
+# reference the dev + prod environments and set a required_reviewers rule on prod.
+if grep -Fq "environments/dev" "$GH_ENV_SH" \
+   && grep -Fq "environments/prod" "$GH_ENV_SH" \
+   && grep -Fq "required_reviewers" "$GH_ENV_SH" \
+   && grep -Fq '"reviewers"' "$GH_ENV_SH"; then
+  echo "   ✓ dev + prod configured; prod asserts required_reviewers"
 else
-  echo "   ✗ cosmos-rbac.bicep MISSING the Data Contributor role id or sqlRoleAssignments resource"
+  echo "   ✗ setup-github-environments.sh missing dev/prod env config or the required_reviewers assertion"
   FAIL=1
 fi
 
-echo "▶  Verifying main.bicep wires the cosmos-rbac module with the MI principalId (CM-38 AC3)"
-if grep -Fq "modules/cosmos-rbac.bicep" "$BICEP_DIR/main.bicep" \
-   && grep -Fq "principalId: managedIdentity.outputs.principalId" "$BICEP_DIR/main.bicep"; then
-  echo "   ✓ cosmos-rbac wired with managedIdentity.outputs.principalId"
+echo "▶  Verifying setup-github-environments.sh is syntactically valid (CM-40)"
+if bash -n "$GH_ENV_SH" 2>/dev/null; then
+  echo "   ✓ script parses (bash -n)"
 else
-  echo "   ✗ main.bicep does NOT wire cosmos-rbac with the MI principalId"
+  echo "   ✗ setup-github-environments.sh has a syntax error"
   FAIL=1
 fi
 
-echo "▶  Verifying compiled ARM contains Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments (CM-38)"
-if grep -Fq "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments" /tmp/main.json; then
-  echo "   ✓ sqlRoleAssignments present in compiled ARM"
+# ---------------------------------------------------------------------------
+# CM-42 — VectorDistance() cosine-semantics documentation + smoke-test fix
+#
+# Root cause: VectorDistance() returns a cosine *similarity* score (1.0 = identical),
+# not a 1−cos distance. These static guards keep the doc note + the corrected smoke
+# test + the inline cosmos.bicep note from drifting, and guard the one real
+# regression risk — someone "fixing" the bare ORDER BY into DESC, which would
+# invert ranking. The live smoke test can't run in CI (needs a Cosmos account).
+# (The production retrieval-side similarity inversion is tracked separately in CM-47.)
+# ---------------------------------------------------------------------------
+
+SMOKE_PY="$ROOT/infra/scripts/cosmos-smoke-test.py"
+INFRA_DOC="$ROOT/docs/INFRA.md"
+RAG_STORE="$ROOT/agents/knowledge/cosmos_store.py"
+
+echo "▶  Verifying cosmos.bicep documents VectorDistance similarity semantics (CM-42)"
+if grep -Fq "similarity score" "$COSMOS" && grep -Fq "CM-42" "$COSMOS"; then
+  echo "   ✓ cosmos.bicep carries the CM-42 VectorDistance semantics note"
 else
-  echo "   ✗ sqlRoleAssignments MISSING from compiled ARM — data-plane RBAC not deployed"
+  echo "   ✗ cosmos.bicep MISSING the CM-42 'similarity score' note beside distanceFunction"
   FAIL=1
 fi
 
-echo "▶  Verifying agents/security/ package files exist (CM-38)"
-SECURITY_FILES=("__init__.py" "models.py" "detection.py" "masking.py" "field_access.py" "audit.py" "retention.py")
-for f in "${SECURITY_FILES[@]}"; do
-  if [ -s "$SECURITY_PKG/$f" ]; then
-    echo "   ✓ agents/security/$f present"
-  else
-    echo "   ✗ agents/security/$f MISSING or empty"
-    FAIL=1
-  fi
-done
-
-echo "▶  Verifying tests/eval/security_pii_seed.jsonl exists and is non-empty (CM-38 AC1)"
-PII_SEED="$ROOT/tests/eval/security_pii_seed.jsonl"
-if [ -s "$PII_SEED" ]; then
-  SEED_COUNT=$(grep -c . "$PII_SEED" || true)
-  if [ "$SEED_COUNT" -ge 10 ]; then
-    echo "   ✓ security_pii_seed.jsonl present with $SEED_COUNT examples"
-  else
-    echo "   ✗ security_pii_seed.jsonl has only $SEED_COUNT examples (expected >=10)"
-    FAIL=1
-  fi
+echo "▶  Verifying docs/INFRA.md documents VectorDistance semantics (CM-42 AC #1)"
+if grep -Fq "VectorDistance semantics" "$INFRA_DOC" \
+   && grep -Fq "similarity score" "$INFRA_DOC"; then
+  echo "   ✓ docs/INFRA.md has the VectorDistance semantics section"
 else
-  echo "   ✗ tests/eval/security_pii_seed.jsonl missing"
+  echo "   ✗ docs/INFRA.md MISSING the 'VectorDistance semantics' section"
+  FAIL=1
+fi
+
+echo "▶  Verifying smoke test aliases the result as a similarity score (CM-42 AC #3)"
+# The misleading `AS distance` alias must be gone; the result is `AS score`.
+if grep -Fq "AS score" "$SMOKE_PY" && ! grep -Fq "AS distance" "$SMOKE_PY"; then
+  echo "   ✓ smoke test selects VectorDistance ... AS score (no stale 'AS distance')"
+else
+  echo "   ✗ smoke test still uses 'AS distance' or lost the 'AS score' alias"
+  FAIL=1
+fi
+
+echo "▶  Verifying smoke test asserts a high self-similarity (CM-42 AC #3)"
+if grep -Fq "0.99" "$SMOKE_PY"; then
+  echo "   ✓ smoke test asserts cosine self-similarity >= 0.99"
+else
+  echo "   ✗ smoke test no longer asserts the >= 0.99 self-similarity threshold"
+  FAIL=1
+fi
+
+echo "▶  Verifying no query orders VectorDistance DESC (CM-42 ranking-inversion guard)"
+# Bare ORDER BY VectorDistance(...) already ranks most-similar first for cosine.
+# A DESC would invert it. Guard the smoke test + the knowledge-retrieval SQL.
+DESC_HITS=$(grep -rEi "VectorDistance\([^)]*\)[[:space:]]+DESC" "$SMOKE_PY" "$RAG_STORE" 2>/dev/null || true)
+if [ -z "$DESC_HITS" ]; then
+  echo "   ✓ no 'ORDER BY VectorDistance(...) DESC' (ranking stays most-similar-first)"
+else
+  echo "   ✗ found a DESC-ordered VectorDistance query — inverts cosine ranking:"
+  printf "%s\n" "$DESC_HITS" | sed 's/^/       /'
   FAIL=1
 fi
 

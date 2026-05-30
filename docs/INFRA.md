@@ -180,14 +180,68 @@ In `Settings → Secrets and variables → Actions → New repository secret`:
 | `AZURE_TENANT_ID`       | Azure AD tenant ID                             |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription ID                         |
 
-### Required GitHub environments
+### Required GitHub environments (CM-40)
 
-In `Settings → Environments → New environment`:
+`deploy.yml` gates jobs behind `environment: dev` / `environment: prod`. The
+**prod** environment must carry a **required reviewer** so a release can't deploy
+to the shared `rg-condomanager` unattended — GitHub does not infer this from the
+workflow, and `setup-azure-oidc.sh` can't touch GitHub Environments. Configure
+both environments idempotently with:
 
-| Environment | Used by                       | Reviewers required           |
+```bash
+# gh authenticated as a repo ADMIN (the owner's `repo` scope). One-time / on
+# re-bootstrap. The CI service principal does NOT have admin and should not.
+bash infra/scripts/setup-github-environments.sh           # dharmendra-verma/CondoManager
+bash infra/scripts/setup-github-environments.sh owner/repo # or an explicit repo
+```
+
+| Environment | Used by                       | Required reviewers           |
 |-------------|-------------------------------|------------------------------|
-| `dev`       | future per-env resource jobs  | none                         |
-| `prod`      | shared RG + per-env resources | at least one approver        |
+| `dev`       | `deploy-dev` (push:main)       | none — auto-deploy           |
+| `prod`      | `deploy-prod` (release)        | at least one (the repo owner)|
+
+Verify the prod gate without a deploy:
+
+```bash
+gh api repos/dharmendra-verma/CondoManager/environments/prod \
+  --jq '.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login'
+# → prints the required reviewer (dharmendra-verma)
+```
+
+> **Environment protection rules need a public repo or a paid plan.** They're
+> free on this **public** repo; on a *private* Free-plan repo they're unavailable
+> (GitHub Pro/Team/Enterprise only).
+
+#### Smoke test (release-based — the prod gate only applies to `deploy-prod`)
+
+`push:main` runs `deploy-dev` (no approval); the prod gate fires only on a
+**published release**. To exercise the pause end-to-end:
+
+```bash
+git tag -a v0.0.0-smoke -m "CM-40 approval smoke test" && git push origin v0.0.0-smoke
+gh release create v0.0.0-smoke --notes "smoke test — delete after"
+# → deploy.yml `deploy-prod` enters env `prod` and PAUSES at "Waiting for review".
+# Approve it in the run's UI (or `gh run` review), confirm it proceeds, then:
+gh release delete v0.0.0-smoke -y && git push origin :refs/tags/v0.0.0-smoke
+```
+
+> **Single-account caveat:** the required reviewer is the repo owner and
+> `prevent_self_review` is `false` (a true "different human approves" needs a
+> second account or an org — out of scope per CM-40). The gate still forces an
+> explicit click before any prod deploy, which is the goal.
+
+#### Branch protection on `main` (optional — intentionally left OFF)
+
+CM-40 deliberately does **not** require PR reviews on `main`: on this
+single-owner repo that would block the autonomous merge workflow (every PR would
+need a second approver that doesn't exist). To enable it later:
+
+```bash
+gh api --method PUT repos/dharmendra-verma/CondoManager/branches/main/protection --input - <<'JSON'
+{ "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "required_status_checks": null, "enforce_admins": false, "restrictions": null }
+JSON
+```
 
 ## Deploying manually (smoke test)
 
@@ -293,6 +347,49 @@ Default embedding dimensions: **1536** (matches OpenAI
 for `text-embedding-3-large` by overriding `cosmosVectorDimensions` in
 `main.parameters.json`.
 
+#### VectorDistance semantics (CM-42)
+
+> **Despite its name, `VectorDistance()` returns a *similarity score*, not a
+> distance.** This caught us out during the CM-17 smoke test, which logged
+> `distance=1` for an identical-vector self-query and looked wrong (a cosine
+> *distance* would be `≈ 0`). It is correct.
+
+Per the [Microsoft reference][vdist], `VectorDistance()` *"returns the similarity
+score between two specified vectors."* For our `cosine` distance function the
+score is in **`[-1, 1]`** where:
+
+| Vectors | cosine score |
+|---|---|
+| identical | **`1.0`** (the smoke test's "`distance=1`") |
+| orthogonal | `0` |
+| opposite | `-1` |
+
+Higher = more similar. Consequences for every query against `policies-vector`:
+
+- **Always order with a *bare* `ORDER BY VectorDistance(c.embedding, @qv)`** — no
+  `ASC`/`DESC`. Cosmos reads the metric from the index and ranks **most-similar
+  first** automatically. Adding `DESC` would *invert* the ranking and return the
+  least-similar rows. (The CM-17 smoke test and the CM-33 knowledge-retrieval
+  query both already do this correctly.)
+- A `WHERE VectorDistance(...) > <threshold>` filter keeps the *most* similar
+  rows for cosine (high score = close), the opposite of a distance threshold.
+
+> ⚠️ **Known bug ([CM-47]):** the CM-33 Knowledge Agent retrieval path
+> (`agents/knowledge/retrieval.py`) currently converts this score with
+> `similarity = 1 − VectorDistance`, which **inverts** it (a perfect match scores
+> `0` and gets refused). The `ORDER BY` is fine; only the similarity arithmetic is
+> wrong. Tracked + fixed under CM-47 (its test fakes encode the same inversion, so
+> CI is green). CM-42 documents the semantics and fixes the smoke test; the
+> production retrieval fix is CM-47.
+
+CM-42 ruled out the other hypotheses: the `1.0` is deterministic (not DiskANN
+index lag — no wait/retry needed), and `float32` narrowing/zero-norm don't apply
+to an identical-vector self-query. The smoke test now asserts the self-similarity
+is `>= 0.99` (tolerating `float32` narrowing) instead of ignoring the value.
+
+[vdist]: https://learn.microsoft.com/azure/cosmos-db/nosql/query/vectordistance
+[CM-47]: https://projecttracking.atlassian.net/browse/CM-47
+
 ### Post-deploy smoke-test
 
 `infra/scripts/cosmos-smoke-test.py` validates AC #4 ("Sample insert +
@@ -317,8 +414,10 @@ python infra/scripts/cosmos-smoke-test.py
 ```
 
 The script inserts a dummy 1536-dim vector, queries it back with
-`VectorDistance()`, asserts the inserted doc is the nearest neighbour,
-and cleans up. Exit 0 means the account is wired correctly.
+`VectorDistance()`, asserts the inserted doc is the nearest neighbour
+**and that its cosine similarity is `≈ 1.0` (`>= 0.99`)** (see
+[VectorDistance semantics](#vectordistance-semantics-cm-42) above), then
+cleans up. Exit 0 means the account is wired correctly.
 
 ## Key Vault & Managed Identity (CM-18)
 

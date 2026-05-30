@@ -169,6 +169,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # Quieter output by default; CI passes -q anyway.
 addopts = "-ra"
+# CM-39: the unified eval-suite gate is tagged so the eval layer can be selected
+# with `pytest -m eval`. It also runs under plain `pytest` (markers don't exclude).
+markers = [
+  "eval: offline PRD eval-suite gates (select with `pytest -m eval`)",
+]
 filterwarnings = [
   # Traceloop and openinference emit DeprecationWarnings from upstream deps that
   # we can't fix; demoting to ignore keeps the suite focused on our own warnings.

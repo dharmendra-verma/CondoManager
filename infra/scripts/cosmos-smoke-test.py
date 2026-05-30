@@ -125,11 +125,17 @@ def main() -> int:
         return 1
 
     try:
-        # Vector similarity query against the same embedding — the inserted
-        # doc must come back as the top match (distance ≈ 0).
+        # Vector search against the same embedding — the inserted doc must come
+        # back as the top match. NOTE (CM-42): despite its name, VectorDistance()
+        # returns a *similarity score*, not a 1−cos distance. For the 'cosine'
+        # function the score is in [-1, 1] where 1.0 = identical, 0 = orthogonal,
+        # so a self-query scores ≈ 1.0 (this is why the smoke test originally
+        # logged "distance=1"). A bare `ORDER BY VectorDistance(...)` already
+        # ranks most-similar first — do NOT add DESC (it would invert ranking).
+        # See docs/INFRA.md "VectorDistance semantics".
         query = (
             "SELECT TOP 1 c.id, c.title, "
-            "VectorDistance(c.embedding, @qv) AS distance "
+            "VectorDistance(c.embedding, @qv) AS score "
             "FROM c "
             "WHERE c.tenantId = @tenantId "
             "ORDER BY VectorDistance(c.embedding, @qv)"
@@ -158,7 +164,18 @@ def main() -> int:
             )
             return 1
 
-        print(f"   OK nearest match: id={top['id']} distance={top.get('distance')}")
+        # Cosine self-similarity must be ≈ 1.0. Threshold (not == 1.0) tolerates
+        # the float64→float32 narrowing Cosmos applies per the vectorEmbeddingPolicy.
+        score = top.get("score")
+        if score is None or score < 0.99:
+            sys.stderr.write(
+                f"ERROR: self-similarity score={score}, expected ≈ 1.0 (>= 0.99) for an "
+                "identical-vector cosine query. A low score means the embedding policy / "
+                "index is misconfigured.\n"
+            )
+            return 1
+
+        print(f"   OK nearest match: id={top['id']} cosine-similarity={score}")
         print("PASS: Cosmos vector-search smoke-test")
         return 0
     finally:

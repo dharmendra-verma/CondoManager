@@ -38,7 +38,13 @@ from agents.knowledge import (
     retrieve,
 )
 from agents.knowledge.rag import REFUSAL_TEXT
-from agents.observability import langgraph_node_span
+from agents.observability import (
+    METRIC_KNOWLEDGE_ANSWERED,
+    METRIC_KNOWLEDGE_REFUSED,
+    METRIC_TRIAGE_ROUTE,
+    emit_metric,
+    langgraph_node_span,
+)
 
 from . import guardrails
 from .escalation import build_record, get_escalation_classifier
@@ -102,6 +108,11 @@ def triage(state: AgentState) -> dict[str, Any]:
         message = state.normalized.content if state.normalized is not None else state.raw_message
         classifier = get_triage_classifier()
         result = classifier.classify(message, history)
+        route = route_for(result)
+
+        # CM-39: PRD metric — intent → route (feeds triage-accuracy + routing
+        # dashboards; the offline eval gates the same quantity on golden data).
+        emit_metric(METRIC_TRIAGE_ROUTE, intent=result.intent.value, route=route)
 
         return {
             "intent": result.intent,
@@ -109,7 +120,7 @@ def triage(state: AgentState) -> dict[str, Any]:
             "tone": result.tone,
             "history": history,
             "cost_so_far": state.cost_so_far + classifier.cost_per_call_usd,
-            "routes": [route_for(result)],
+            "routes": [route],
         }
 
 
@@ -155,6 +166,13 @@ def knowledge(state: AgentState) -> dict[str, Any]:
             else state.raw_message
         )
         answer, cost, searches = _answer_knowledge(message, state.tenant_id)
+
+        # CM-39: PRD metrics — self-service (answered) vs hallucination-control
+        # (refused → handoff). Same quantities the knowledge offline eval gates.
+        emit_metric(
+            METRIC_KNOWLEDGE_REFUSED if answer.refused else METRIC_KNOWLEDGE_ANSWERED,
+            confidence=answer.confidence,
+        )
 
         update: dict[str, Any] = {
             "output": {
