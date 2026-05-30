@@ -6,8 +6,8 @@ This is the orchestrator: a `StateGraph(AgentState)` with nodes for triage,
 knowledge, maintenance, escalation, HITL review, and a guardrail-terminated
 terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one at a time without
 touching the spine. **`triage` (CM-30, see §3), `maintenance` (CM-31, see §8),
-and the `vendor` agent that runs after it (CM-35, see §9) are now real**;
-`knowledge` and `escalation` remain stubs until their stories land.
+and the `vendor` agent that runs after it (CM-35, see §10) are now real**;
+`knowledge` (CM-33, §9) and `escalation` (CM-32) are real too.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
@@ -137,17 +137,36 @@ falls back to a deterministic keyword heuristic when `OPENAI_API_KEY` is
 unset, preserving the original stub's routing (`"human"`/`"escalat"` →
 escalation, `"fix"`/`"broken"`/`"leak"` → maintenance, else → knowledge) so
 this hello-world spine stays testable offline. The spine topology is
-unchanged. CM-31 (maintenance) and CM-32 (escalation) remain stubs.
+unchanged. CM-31 (maintenance) remains a stub.
+
+### `escalation` is now a real agent (CM-32)
+
+The `escalation` node is the Escalation Manager Agent — see
+[`docs/ESCALATION.md`](ESCALATION.md). It sub-classifies the escalation
+(`repeat`/`service_failure`/`safety`/`communication_breakdown`/`multi_issue`/`legal`),
+raises a **semantic** `legal_risk` flag, persists an `EscalationRecord` to the
+Cosmos `escalations` container, posts a manager alert (Slack), and prepares an
+empathetic tenant draft that is **held** behind `hitl_review`. Like triage, it
+runs offline (`get_escalation_classifier()` → keyword heuristic with no key).
+The escalation result lives on its own `AgentState.escalation` field (the
+record must survive the `hitl_review` step, which overwrites `output`).
 
 ---
 
 ## 4. HITL `interrupt()` contract
 
-`hitl_review` calls LangGraph's `interrupt(...)` primitive. The pause
-payload (visible to the resumer) is:
+`hitl_review` calls LangGraph's `interrupt(...)` primitive. Since CM-32 the
+pause payload (visible to the resumer) carries the escalation review context:
 
 ```python
-{"reason": "stub-hitl-review", "draft": state.output.get("draft")}
+{
+    "reason": "escalation_review",
+    "category": state.escalation.category,   # e.g. "legal"
+    "legal_risk": state.escalation.legal_risk,
+    "severity": state.escalation.severity,   # "high" | "critical"
+    "draft": state.output.get("draft"),      # the held tenant reply
+    "manager_alert": state.escalation.manager_alert,
+}
 ```
 
 To resume after a human has approved:
@@ -161,10 +180,11 @@ graph.invoke(
 )
 ```
 
-The whatever-the-human-sent payload lands as
-`state.output["approved"]`, and `state.output["via"] == "hitl"` marks
-the path. CM-32 will replace `_guardrail_termination`'s minimal escalation
-draft with a real tenant-facing reply behind the same gate.
+The human payload lands as `state.output["approved"]`, `state.output["via"]
+== "hitl"` marks the path, and `state.output["sent"]` reflects the decision.
+**Legal gate (CM-32):** the draft is marked `sent` — and the record
+transitioned to `approved_sent` — **only** when `approved is True`. There is
+no auto-approve path, so a legal-flagged case is never sent without a human.
 
 ---
 
@@ -300,7 +320,44 @@ carrying `ticket_id`, `unit`, `category`, `priority`, `eta`, and a tenant
 
 ---
 
-## 9. Vendor Agent (`agents/vendor/`, CM-35)
+## 9. Knowledge Agent — RAG over Cosmos (CM-33)
+
+The `knowledge` node answers tenant policy questions by RAG over the Cosmos
+`policies-vector` container that the CM-34 gdrive-sync job populates. It reuses
+CM-34's `agents.knowledge` write-side primitives (`chunk_text`,
+`default_embedder`) and adds the read side.
+
+**Flow** (`agents/knowledge/`):
+
+1. **Retrieve** (`retrieval.retrieve`) — embed the question, run a vector
+   search (`CosmosVectorStore.search_chunks` → `VectorDistance()`) + a keyword
+   search (`keyword_search` → `CONTAINS`), and fuse the two rank lists with
+   **Reciprocal Rank Fusion** into the top-k `RetrievedChunk`s.
+2. **Answer** (`rag.answer_question`) — a strict "use ONLY the numbered context
+   passages" prompt yields a `KnowledgeAnswer` with inline `[n]` citations.
+   Confidence = the top chunk's cosine similarity (`1 - VectorDistance`).
+3. **Refuse + hand off** — if confidence `< CONFIDENCE_THRESHOLD` (0.6) or
+   nothing grounds the answer, the node sets `refused=True` and appends
+   `"maintenance"` to `state.routes`; `graph._knowledge_router` then hands the
+   request to the Maintenance agent.
+
+**Model seam** (`llm.get_chat_model`): GPT-4o-mini `LLMChatModel` when
+`OPENAI_API_KEY` is set (sourced from Key Vault), else a deterministic
+`StubChatModel` — same env-driven pattern as CM-30's `get_triage_classifier`,
+so tests/CI run offline. When `COSMOS_ENDPOINT` is unset the node refuses
+without any model/network call, preserving the no-credentials contract.
+
+**Hallucination control:** the model must answer only from the retrieved
+passages and set `can_answer=false` otherwise; citations are validated against
+the retrieved set before they reach `output`.
+
+**Eval:** `tests/eval/knowledge_seed.jsonl` + `tests/knowledge/test_eval_knowledge.py`
+assert >25% self-service resolution and <1% hallucination using the stub model
+(reproducible in CI); the real-LLM eval is opt-in behind `OPENAI_API_KEY`.
+
+---
+
+## 10. Vendor Agent (`agents/vendor/`, CM-35)
 
 The `vendor` node runs after `maintenance` and delegates to
 `agents.vendor.VendorAgent`. It reads the created ticket from `state.output`

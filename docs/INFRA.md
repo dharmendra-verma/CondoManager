@@ -47,7 +47,7 @@ infra/
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
-│       ├── cosmos.bicep                      # Cosmos DB account + db + 5 containers (CM-17, +checkpoints in CM-28)
+│       ├── cosmos.bicep                      # Cosmos DB account + db + 8 containers (CM-17; +checkpoints CM-28; +knowledge_sync CM-34; +escalations CM-32; +digests CM-36)
 │       ├── managed-identity.bicep            # User-Assigned MI shared by workloads (CM-18)
 │       ├── keyvault.bicep                    # Key Vault (RBAC) + MI role assignment (CM-18)
 │       ├── acr.bicep                         # Azure Container Registry (Basic SKU) (CM-20)
@@ -337,6 +337,7 @@ diffs the two name lists to prevent drift.
 | `langfuse-public-key`       | Langfuse UI (public, low-risk)                      | On project reset               |
 | `langfuse-secret-key`       | Langfuse UI                                         | Quarterly                      |
 | `cosmos-connection-string`  | `az cosmosdb keys list --type connection-strings`   | Primary ↔ secondary swap       |
+| `slack-webhook-url`         | Slack incoming-webhook (CM-32 manager alerts)       | On channel/app reconfig        |
 
 ### First-time setup after deploy
 
@@ -630,6 +631,25 @@ python infra/scripts/gdrive-sync-smoke-test.py
 
 A bootstrap run indexes one doc; an immediate re-run is asserted to be a clean
 idempotent no-op. Exit 0 == healthy.
+
+## Analytics digest job (CM-36)
+
+A second Azure Functions Timer app — **`func-condomanager-analytics-<env>`**
+(`infra/bicep/modules/analytics.bicep`, code in `functions/analytics-digest/`,
+logic in `agents/analytics/`) — runs **weekly** (Mondays 08:00 UTC). It reads
+the `tickets` (CM-31) and `escalations` (CM-32) containers, computes recurring
+issues / contractor scores / sentiment trend / predictive flags, writes a
+`WeeklyDigest` to the new **`digests`** container (partition `/tenantId`,
+90-day TTL — a rolling, rebuildable view for the CM-37 portal), and posts the
+digest to the manager Slack channel via the `slack-webhook-url` KV reference
+(no new secret). Same MI + KV-reference + out-of-band `func publish` model as
+the gdrive-sync app. Config: `COSMOS_ENDPOINT`, `SLACK_WEBHOOK_URL` (KV),
+`ANALYTICS_TENANT_ID` (default `default`), `ENVIRONMENT`.
+
+> Data-availability notes: contractor performance is scored over the ticket
+> `owner` (no Vendor entity / `resolved_at` yet — CM-35 + a schema add upgrade
+> it); sentiment is the escalation-volume proxy (tickets don't persist tone);
+> email delivery is a follow-up (Slack + the `digests` container today).
 
 ## Adding per-env resources in later stories
 

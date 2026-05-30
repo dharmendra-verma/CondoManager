@@ -17,10 +17,15 @@ Public surface:
   surface (classification schema, classifier selector, routing matrix).
 * :class:`TicketHistoryProvider`, :func:`get_history_provider` — the CM-30
   ticket-history seam (CM-31 swaps in the Cosmos-backed provider).
+* :class:`EscalationCategory`, :class:`EscalationRecord`,
+  :class:`EscalationClassification`, :func:`get_escalation_classifier`,
+  :func:`get_escalation_store`, :func:`get_manager_notifier` — the CM-32
+  Escalation Agent surface (sub-classification + legal flag, Cosmos record
+  store, manager-alert notifier).
 
-The ``triage`` node (CM-30) is a real classifier; knowledge, maintenance,
-escalation, hitl_review, and guardrail_terminated remain stubs in ``nodes``
-— CM-31/32 replace those with real logic.
+The ``triage`` (CM-30) and ``escalation`` (CM-32) nodes are real agents;
+knowledge, maintenance, and guardrail_terminated remain stubs in ``nodes``
+— CM-31 / CM-Epic 6 replace those.
 """
 
 from __future__ import annotations
@@ -32,6 +37,18 @@ from __future__ import annotations
 from agents.channels.schema import Channel
 
 from .checkpointer import CosmosCheckpointSaver, get_checkpointer
+from .escalation import (
+    EscalationClassification,
+    EscalationClassifier,
+    HeuristicEscalationClassifier,
+    LLMEscalationClassifier,
+    get_escalation_classifier,
+)
+from .escalation_store import (
+    EscalationStore,
+    NoopEscalationStore,
+    get_escalation_store,
+)
 from .graph import build_graph
 from .guardrails import (
     COST_CAP_USD,
@@ -42,7 +59,15 @@ from .guardrails import (
     check,
 )
 from .history import NoopTicketHistory, TicketHistoryProvider, get_history_provider
-from .state import AgentState, Intent, Tone, Urgency
+from .notify import LogNotifier, ManagerNotifier, get_manager_notifier
+from .state import (
+    AgentState,
+    EscalationCategory,
+    EscalationRecord,
+    Intent,
+    Tone,
+    Urgency,
+)
 from .triage import (
     HeuristicTriageClassifier,
     LLMTriageClassifier,
@@ -60,10 +85,20 @@ __all__ = [
     "AgentState",
     "Channel",
     "CosmosCheckpointSaver",
+    "EscalationCategory",
+    "EscalationClassification",
+    "EscalationClassifier",
+    "EscalationRecord",
+    "EscalationStore",
     "GuardrailResult",
+    "HeuristicEscalationClassifier",
     "HeuristicTriageClassifier",
     "Intent",
+    "LLMEscalationClassifier",
     "LLMTriageClassifier",
+    "LogNotifier",
+    "ManagerNotifier",
+    "NoopEscalationStore",
     "NoopTicketHistory",
     "Tone",
     "TicketHistoryProvider",
@@ -73,7 +108,10 @@ __all__ = [
     "build_graph",
     "check",
     "get_checkpointer",
+    "get_escalation_classifier",
+    "get_escalation_store",
     "get_history_provider",
+    "get_manager_notifier",
     "get_triage_classifier",
     "route_for",
 ]
