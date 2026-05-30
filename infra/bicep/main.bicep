@@ -416,3 +416,6 @@ output analyticsFunctionAppId string = analytics.outputs.functionAppId
 // the tenant-facing URL.
 output staticWebAppName string = staticWebApp.outputs.staticWebAppName
 output staticWebAppDefaultHostname string = staticWebApp.outputs.defaultHostname
+
+// CM-38 — Cosmos data-plane RBAC assignment name (tooling discovery).
+output cosmosDataPlaneRoleAssignmentName string = cosmosRbac.outputs.roleAssignmentName
