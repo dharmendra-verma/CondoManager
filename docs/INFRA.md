@@ -179,14 +179,68 @@ In `Settings → Secrets and variables → Actions → New repository secret`:
 | `AZURE_TENANT_ID`       | Azure AD tenant ID                             |
 | `AZURE_SUBSCRIPTION_ID` | Target subscription ID                         |
 
-### Required GitHub environments
+### Required GitHub environments (CM-40)
 
-In `Settings → Environments → New environment`:
+`deploy.yml` gates jobs behind `environment: dev` / `environment: prod`. The
+**prod** environment must carry a **required reviewer** so a release can't deploy
+to the shared `rg-condomanager` unattended — GitHub does not infer this from the
+workflow, and `setup-azure-oidc.sh` can't touch GitHub Environments. Configure
+both environments idempotently with:
 
-| Environment | Used by                       | Reviewers required           |
+```bash
+# gh authenticated as a repo ADMIN (the owner's `repo` scope). One-time / on
+# re-bootstrap. The CI service principal does NOT have admin and should not.
+bash infra/scripts/setup-github-environments.sh           # dharmendra-verma/CondoManager
+bash infra/scripts/setup-github-environments.sh owner/repo # or an explicit repo
+```
+
+| Environment | Used by                       | Required reviewers           |
 |-------------|-------------------------------|------------------------------|
-| `dev`       | future per-env resource jobs  | none                         |
-| `prod`      | shared RG + per-env resources | at least one approver        |
+| `dev`       | `deploy-dev` (push:main)       | none — auto-deploy           |
+| `prod`      | `deploy-prod` (release)        | at least one (the repo owner)|
+
+Verify the prod gate without a deploy:
+
+```bash
+gh api repos/dharmendra-verma/CondoManager/environments/prod \
+  --jq '.protection_rules[] | select(.type=="required_reviewers") | .reviewers[].reviewer.login'
+# → prints the required reviewer (dharmendra-verma)
+```
+
+> **Environment protection rules need a public repo or a paid plan.** They're
+> free on this **public** repo; on a *private* Free-plan repo they're unavailable
+> (GitHub Pro/Team/Enterprise only).
+
+#### Smoke test (release-based — the prod gate only applies to `deploy-prod`)
+
+`push:main` runs `deploy-dev` (no approval); the prod gate fires only on a
+**published release**. To exercise the pause end-to-end:
+
+```bash
+git tag -a v0.0.0-smoke -m "CM-40 approval smoke test" && git push origin v0.0.0-smoke
+gh release create v0.0.0-smoke --notes "smoke test — delete after"
+# → deploy.yml `deploy-prod` enters env `prod` and PAUSES at "Waiting for review".
+# Approve it in the run's UI (or `gh run` review), confirm it proceeds, then:
+gh release delete v0.0.0-smoke -y && git push origin :refs/tags/v0.0.0-smoke
+```
+
+> **Single-account caveat:** the required reviewer is the repo owner and
+> `prevent_self_review` is `false` (a true "different human approves" needs a
+> second account or an org — out of scope per CM-40). The gate still forces an
+> explicit click before any prod deploy, which is the goal.
+
+#### Branch protection on `main` (optional — intentionally left OFF)
+
+CM-40 deliberately does **not** require PR reviews on `main`: on this
+single-owner repo that would block the autonomous merge workflow (every PR would
+need a second approver that doesn't exist). To enable it later:
+
+```bash
+gh api --method PUT repos/dharmendra-verma/CondoManager/branches/main/protection --input - <<'JSON'
+{ "required_pull_request_reviews": { "required_approving_review_count": 1 },
+  "required_status_checks": null, "enforce_admins": false, "restrictions": null }
+JSON
+```
 
 ## Deploying manually (smoke test)
 
