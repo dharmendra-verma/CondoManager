@@ -620,18 +620,28 @@ has been applied (else step 3 errors with `roleAssignments/write`):
    az keyvault secret set --vault-name kv-condomanager-prod \
        --name langfuse-secret-key --value <sk_…>
    ```
-4. **Build three dashboards** in the Langfuse UI under Dashboards → New
-   Dashboard. Queries (Langfuse query builder, all filter `env=prod`):
+4. **Build three per-agent dashboards** in the Langfuse UI under Dashboards →
+   New Dashboard. All three group by `agent_name` (the `@observe_node`
+   span name, e.g. `triage.classify`) and filter `env=prod`, so each chart
+   breaks the metric down per agent (CM-45):
 
    | Dashboard | Chart | Metric | Group by | Why |
    |-----------|-------|--------|----------|-----|
-   | Cost/day | Bar | `total_cost` | `day` | Detect budget creep before the CM-26 Azure-Monitor alert fires |
-   | p95 latency | Line | `latency_ms` percentile 95 | `hour` | Plan-mode tier degradation, vendor incident detection |
-   | Error rate | Line | `error_rate` | `agent_name` (from metadata) | Stuck nodes surface before tenant tickets arrive |
+   | **Cost** per agent | Bar | `total_cost` | `agent_name`, `day` | Spot which agent drives spend before the CM-26 Azure-Monitor budget alert fires |
+   | **Quality** per agent | Line | refusal rate (`metric.knowledge.refused` share) + HITL approval (`metric.hitl.rating` decision=approve %) | `agent_name`, `day` | Catch a degrading agent (over-refusing / low approval) before tenants do |
+   | **Latency** per agent | Line | `latency_ms` percentile 95 | `agent_name`, `hour` | Plan-mode tier degradation + vendor-incident detection, isolated to the slow agent |
 
    These are starting templates — the UI lets the operator tweak time
    windows and add per-tenant filters (`tenant_id` is attached as
    observation metadata once that contextvar lands in a later story).
+
+   **Engineering-observability twin.** The same PRD signals are also charted in
+   Azure Monitor: the CM-25 operations workbook (`infra/bicep/modules/workbook-payload.json`)
+   carries a **PRD metrics** panel group (`metric-triage-routing`,
+   `metric-knowledge-self-service`, `metric-vendor-auto-dispatch`,
+   `metric-escalation-legal-recall`, `metric-hitl-approval`) over the same
+   `metric.*` `customEvents`. Langfuse is the LLM-cost/quality overlay; the
+   workbook is the engineering view — they read the same emission contract.
 
 ### Wiring future LangGraph nodes
 
