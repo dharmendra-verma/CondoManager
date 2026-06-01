@@ -26,7 +26,8 @@ The `escalation` node (`agents/orchestrator/nodes.py`):
 6. **Route to `hitl_review`** (AC #5/#6).
 
 `hitl_review` pauses with `interrupt(...)`, surfacing the review context, and
-on resume sets the record's terminal status from the approval.
+on resume sets the record's terminal status from the approval — and, since
+**CM-44**, also captures the manager's rating (see §7).
 
 ---
 
@@ -91,7 +92,41 @@ with no credentials and never make a network call.
 
 ---
 
-## 6. Eval
+## 6. Manager ratings — the feedback loop (CM-44)
+
+CM-32 captures the manager's **decision** (approve/reject). CM-44 extends the
+same `hitl_review` resume to capture the manager's **opinion of the draft** so
+reviewer quality becomes measurable.
+
+```
+manager resumes hitl_review
+   resume payload: {approved: bool, rating?: int, comment?: str, reviewer?: str}
+        │
+        ├─ EscalationStore.record_rating(record_id, rating, comment, rated_at)
+        │     → persists onto the SAME `escalations` record:
+        │         manager_rating : int | None
+        │         rating_comment : str
+        │         rated_at       : ISO-8601 | None
+        │
+        └─ emit_metric(metric.hitl.rating,
+                       value      = rating or 1.0,
+                       decision   = "approve" | "reject",
+                       category, legal_risk, has_rating)
+```
+
+* A **bare-bool** resume (`Command(resume=True)`) records no rating but still
+  emits the decision — so the **approval rate** is always measurable even when
+  the manager skips the optional rating.
+* The `metric.hitl.rating` event feeds the CM-45 HITL-approval dashboard panel.
+  The emitter contract lives in [`docs/OBSERVABILITY.md`](OBSERVABILITY.md)
+  §"PRD success metrics".
+* The three new fields are appended to `EscalationRecord`
+  (`agents/orchestrator/state.py`); they do not change the legal-gate invariant
+  in §3.
+
+---
+
+## 7. Eval
 
 - `tests/eval/escalation_seed.jsonl` — labelled `{message → category, legal_risk}`.
 - `tests/eval/test_escalation_eval.py` — offline: dataset integrity + **perfect
@@ -101,8 +136,9 @@ with no credentials and never make a network call.
 
 ---
 
-## 7. Follow-ups
+## 8. Follow-ups
 
 - Send the approved draft to the tenant channel (Twilio/Telegram/email).
 - Email manager-alert channel alongside Slack.
 - Persist the approved reply to the `conversations` container.
+- *(Done — CM-44: manager ratings persisted + `metric.hitl.rating` emitted; see §6.)*

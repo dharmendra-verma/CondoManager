@@ -1,8 +1,31 @@
-# Observability (CM-21)
+# Observability (CM-21 → CM-46)
 
 How CondoManager's Python code emits OpenTelemetry traces, how `request_id`
 is propagated, and how to wire LLM spans without double-emission between
 openinference and Traceloop.
+
+> **New here? The 60-second mental model.** Every tenant message gets one
+> `request_id` at the front door. That id rides along three rails — **traces**
+> (OpenTelemetry spans), **logs** (structured JSON on stdout), and **LLM
+> observations** (LangSmith in dev, Langfuse in prod) — so you can pivot from any
+> one to the others. On top of that, the system emits two kinds of signal:
+> *operational* health (cost, latency, errors — §Operations workbook) and
+> *product* health (the PRD success metrics — §"PRD success metrics"). Read the
+> sections in order; each builds on the `request_id` rail.
+>
+> | Story | What it added |
+> |---|---|
+> | CM-21 | OTel SDK + `request_id` correlation + manual span helpers |
+> | CM-22 | App Insights as the trace backend (Azure Monitor exporter) |
+> | CM-23 | LangSmith (dev) for prompt iteration |
+> | CM-24 | Langfuse (prod) for LLM observations |
+> | CM-25 | Ops workbook (cost / latency / error / HITL-queue panels) |
+> | CM-26 | Alerts (budget, latency-SLO, guardrail-trip, hallucination-spike) |
+> | CM-27 | Structured JSON logging + PII masking |
+> | CM-39 | `emit_metric()` + PRD success-metric event family |
+> | CM-44 | HITL manager ratings → `metric.hitl.rating` |
+> | CM-45 | PRD-metric dashboards (workbook panel group + Langfuse/LangSmith) |
+> | CM-46 | Remaining PRD metric emits + TTM/follow-up outcome metrics |
 
 The OpenTelemetry **backend** (Application Insights) lands in CM-22 — for
 CM-21, leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset and spans go to the
@@ -294,11 +317,13 @@ in the CM-16 Log Analytics workspace under the hood). Provisioned by
 header + time-range parameter + 4 KQL panels) is hand-written and lives
 beside the Bicep at `workbook-payload.json`.
 
-**Most panels will be empty until CM-28 (LangGraph spine) and CM-30
-(Triage Agent) ship live LLM traffic.** The workbook is built now to
-lock the OTel attribute schema and the `hitl.queued` / `hitl.resolved`
-custom-events contract; future stories drop spans into these panels
-without changing the workbook.
+The four operational panels (cost / latency / per-node error / HITL queue)
+were built ahead of traffic to lock the OTel attribute schema and the
+`hitl.queued` / `hitl.resolved` custom-events contract. They light up once
+the agents ship live LLM traffic — **CM-28 (spine), CM-30 (Triage),
+CM-33 (Knowledge), CM-32 (Escalation), and CM-35 (Vendor) have all merged**,
+so dev traffic now populates them. CM-45 added a fifth panel group — the
+**PRD success metrics** (see §"PRD success metrics (CM-39/44/45)" below).
 
 ### Panels
 
@@ -414,6 +439,13 @@ with tracer.start_as_current_span("hitl.resolved") as span:
 
 Stick to those literal event names so the workbook displays without changes.
 
+> **Related (CM-44): `metric.hitl.rating`.** The queue-depth panel above counts
+> tasks *entering* and *leaving* the queue. CM-44 adds a separate
+> `metric.hitl.rating` `customEvents` row when a manager resumes `hitl_review`,
+> carrying `decision` (`approve`/`reject`), `category`, `legal_risk`, and
+> `has_rating`. This feeds the HITL approval-rate panel (CM-45), not the
+> queue-depth panel. See §"PRD success metrics" → "HITL manager ratings" below.
+
 ### One-time pin to dashboard (operator step — AC #3)
 
 Programmatic dashboard pinning is intentionally out of scope:
@@ -521,6 +553,15 @@ Known limitations:
 
 If a category becomes a real concern, add a pattern to
 `agents/observability/pii.py` with a test in `test_pii.py`.
+
+> **See also (CM-38):** the regex starter set documented here is the **log-layer**
+> masker. CM-38 builds on it with a single `mask_text()` facade that also masks
+> the **trace layer** (`PiiMaskingSpanProcessor`), adds an optional Azure AI
+> Language detector for `person`/`address`/`gov_id`, plus field-level RBAC, an
+> append-only audit trail, and a retention/right-to-erasure routine. The full
+> control matrix is in [`docs/SECURITY.md`](SECURITY.md); the "Known limitations"
+> above describe the regex path specifically, which CM-38's Azure detector
+> extends when `AI_LANGUAGE_ENDPOINT` is configured.
 
 ### Joining logs to spans and Langfuse observations
 
@@ -741,14 +782,129 @@ windows = well under $1/month in phase 0 (Azure Monitor logs query
 charges, not row counts at this volume). Documented for the cost-paranoid
 operator; the budget alert above catches surprises.
 
+## PRD success metrics (CM-39 / CM-44 / CM-45)
+
+The operational panels above answer "is the system healthy?". A second class
+of telemetry answers "is the product *working*?" — the PRD success metrics.
+These are the numbers in the [`docs/PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md)
+go/no-go gate (triage accuracy, self-service rate, hallucination rate,
+auto-dispatch rate, legal-flag recall, HITL approval rate).
+
+### One emitter, one event family (CM-39)
+
+Every PRD signal lands as a single `customEvents` row via one helper —
+`agents.observability.emit_metric` — mirroring the CM-26 guardrail-trip pattern
+so the *same* App Insights table and KQL the CM-25 workbook already queries also
+carries product metrics.
+
+```python
+from agents.observability import emit_metric, METRIC_TRIAGE_ROUTE
+
+# In the triage node, after classification (agents/orchestrator/nodes.py:117):
+emit_metric(METRIC_TRIAGE_ROUTE, intent=result.intent.value, route=route)
+```
+
+* Event name is always `metric.<area>.<name>` — use a `METRIC_*` constant so the
+  emitter, the dashboards, and the alerts stay in lock-step.
+* `value` defaults to `1.0` (a count); pass a real number for latency/rates.
+* `request_id` + `tenant_id` are attached automatically (from the CM-21
+  correlation ContextVars), so a PRD metric joins to logs, spans, and Langfuse
+  observations on the same pivot as everything else.
+* **Offline-safe:** with no real `TracerProvider` configured, the OTel API hands
+  back a no-op span — agents emit metrics with zero overhead and the
+  no-credentials test/demo contract (CM-28) is preserved.
+* `None`-valued attributes are dropped, so callers pass optionals without an `if`.
+
+### Metric-name catalogue (the dashboard/alert contract)
+
+The full event list — name, emitter, `value` meaning, and key attributes — is the
+table under **§Alerts → "PRD success-metric events (CM-39 / CM-46)"** above. That
+table is the canonical reference; constants live in
+`agents/observability/metrics.py` and are re-exported from `agents.observability`.
+Don't rename the event strings — the CM-45 workbook panels and the CM-26 alert
+rules match on the literal names.
+
+All nine PRD events are now emitted on `main`: triage / knowledge (CM-39),
+maintenance-dedup / vendor / escalation-legal-flag / ack-latency (CM-46),
+TTM-resolution / follow-up outcome metrics (CM-46), and HITL rating (CM-44). The
+only PRD metric without a runtime event is **efficiency gain** — a manual manager
+time study by design.
+
+### HITL manager ratings (CM-44)
+
+When a manager resumes a paused `hitl_review` (see [`docs/AGENTS.md`](AGENTS.md)
+§4 for the `interrupt()` contract), CM-44 closes the feedback loop:
+
+```
+manager resumes hitl_review with {approved, rating?, comment?}
+   │
+   ├─ EscalationStore.record_rating(...)  → persists manager_rating,
+   │                                         rating_comment, rated_at onto the
+   │                                         reused `escalations` record
+   └─ emit_metric(METRIC_HITL_RATING, value=rating or 1.0,
+                  decision="approve"|"reject", category, legal_risk, has_rating)
+```
+
+A bare-bool resume (`Command(resume=True)`) records no rating but **still** emits
+the decision, so approval rate is always measurable even when the manager skips
+the optional star rating. The three new fields live on `EscalationRecord`
+(`manager_rating: int | None`, `rating_comment: str`, `rated_at: str | None`).
+
+### Dashboards (CM-45)
+
+The `metric.*` events surface in two places:
+
+* **Azure Workbook (Log Analytics).** CM-45 added a **PRD-metrics panel group**
+  to the CM-25 workbook (`infra/bicep/modules/workbook-payload.json`): triage
+  routing, knowledge self-service, vendor auto-dispatch, escalation legal-flag,
+  and HITL approval — all KQL over the `metric.*` `customEvents`.
+* **Langfuse / LangSmith.** CM-45 also built the per-agent cost/quality/latency
+  dashboards (Langfuse for prod, LangSmith for dev). See [`docs/INFRA.md`](INFRA.md)
+  §Langfuse for the dashboard definitions.
+
+### Outcome metrics — TTM & follow-up (CM-46)
+
+Two PRD metrics measure **outcomes**, not per-request behavior, so they only
+accrue once tickets are *resolved*:
+
+* `metric.ttm_resolution_ms` — emitted by `agents.maintenance.resolve_ticket()`
+  when a ticket is closed (`resolved_at − created_at`, via the
+  `TicketRepository.resolve()` seam + the additive `Ticket.resolved_at` field).
+* `metric.followup` — emitted when a fresh ticket recurs against an already
+  **RESOLVED** issue (`dedup.find_resolved_recurrence`).
+
+Operators read the current baselines with
+`agents.analytics.ttm_baseline()` / `followup_rate()` or
+`infra/scripts/outcome-baselines.py`, which reports **"pending data"** on an
+empty store rather than a fabricated number. **Efficiency gain** has no runtime
+event — it's a manual manager time study.
+
+### The offline eval suite (CM-39)
+
+The runtime metrics measure prod; the **eval suite** gates the same quantities
+offline before ship. `agents.eval.run_suite()` aggregates five per-agent golden
+datasets + scorers into one PRD scorecard:
+
+```bash
+python infra/scripts/run-eval-suite.py     # prints the PRD scorecard
+pytest -m eval -q                          # the CI gate (deterministic, no network)
+```
+
+Add `--live` + `OPENAI_API_KEY` to grade the model-dependent metrics too. The
+full gate → runtime-event → status mapping is the table in
+[`docs/PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md) §2.
+
 ## What comes next (forward references)
 
-* **CM-28** is the first consumer of `langgraph_node_span` and
-  `with_agent()`, and the first emitter of `guardrail.cost_cap` /
-  `guardrail.loop_cap`. The per-agent error panel (CM-25 workbook),
-  the latency-SLO panel + alert (CM-26), and the guardrail-trip alert
-  all light up once CM-28 ships traffic. `agent_name` flows into log
-  lines (CM-27) and Langfuse observations (CM-24) alike.
-* **CM-30** extends `tests/eval/triage_seed.jsonl` to 200 examples and
-  emits `llm.refused` from the refusal path — the hallucination-spike
-  alert depends on this.
+The PRD-metric instrumentation is **complete** as of CM-46 — all nine runtime
+events emit on `main` and the dashboards (CM-45) are live. What remains is
+operational, not code:
+
+* **Collect baselines.** TTM / follow-up baselines accrue as real tickets
+  resolve; `infra/scripts/outcome-baselines.py` reports "pending data" until
+  then. The private-beta go/no-go gate in
+  [`docs/PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md) §7 tracks sign-off.
+* **Efficiency gain.** The one PRD metric with no runtime event — a manual
+  manager time study, deliberately not faked.
+* **Eval-dataset breadth.** Generalizing `seed-langsmith-dataset.py` to all five
+  per-agent datasets is the remaining CM-39 sub-task.
