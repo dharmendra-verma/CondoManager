@@ -103,6 +103,98 @@
         "visualization": "linechart"
       },
       "name": "hitl-queue-depth"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## PRD success metrics (CM-45)\n\nPer-agent PRD signals emitted via `emit_metric` (CM-39 / CM-44) into `customEvents`. Triage, knowledge, and HITL panels carry live data today; the **vendor** and **escalation** panels stay empty until CM-46 wires their emitters — the panel is the contract."
+      },
+      "name": "prd-metrics-header"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// PRD: triage routing distribution. CM-39 emits metric.triage.route with a `route`\n// customDimension (intent → route), the same quantity the offline eval gates.\ncustomEvents\n| where name == 'metric.triage.route'\n| extend route = tostring(customDimensions['route'])\n| summarize routed = count() by bin(timestamp, 1h), route\n| order by timestamp asc",
+        "size": 1,
+        "title": "Triage routing volume by route",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "metric-triage-routing"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// PRD: self-service resolution = answered / (answered + refused). CM-39 emits\n// metric.knowledge.answered on a grounded answer and metric.knowledge.refused on handoff.\ncustomEvents\n| where name in ('metric.knowledge.answered', 'metric.knowledge.refused')\n| summarize\n    answered = countif(name == 'metric.knowledge.answered'),\n    total = count()\n  by bin(timestamp, 1d)\n| extend self_service_pct = todouble(answered) / total * 100.0\n| project timestamp, self_service_pct\n| order by timestamp asc",
+        "size": 1,
+        "title": "Knowledge self-service rate (%)",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "metric-knowledge-self-service"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// PRD: vendor auto-dispatch rate = auto_dispatch / (auto_dispatch + hitl).\n// EMPTY until CM-46 emits metric.vendor.auto_dispatch / metric.vendor.hitl.\ncustomEvents\n| where name in ('metric.vendor.auto_dispatch', 'metric.vendor.hitl')\n| summarize\n    auto = countif(name == 'metric.vendor.auto_dispatch'),\n    total = count()\n  by bin(timestamp, 1d)\n| extend auto_dispatch_pct = todouble(auto) / total * 100.0\n| project timestamp, auto_dispatch_pct\n| order by timestamp asc",
+        "size": 1,
+        "title": "Vendor auto-dispatch rate (%)",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "metric-vendor-auto-dispatch"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// PRD: legal-flagged escalation volume (legal-recall proxy — every legal case must\n// reach HITL). EMPTY until CM-46 emits metric.escalation.legal_flag.\ncustomEvents\n| where name == 'metric.escalation.legal_flag'\n| summarize legal_flags = count() by bin(timestamp, 1d)\n| order by timestamp asc",
+        "size": 1,
+        "title": "Escalation legal-flag volume",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "barchart"
+      },
+      "name": "metric-escalation-legal-recall"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "// PRD: HITL approval rate + average manager rating. CM-44 emits metric.hitl.rating\n// with a `decision` dim (approve|reject), `has_rating`, and metric.value = the 1-5\n// rating (or 1.0 when unrated).\ncustomEvents\n| where name == 'metric.hitl.rating'\n| extend decision = tostring(customDimensions['decision'])\n| summarize\n    approved = countif(decision == 'approve'),\n    total = count(),\n    avg_rating = avgif(todouble(customDimensions['metric.value']), tobool(tostring(customDimensions['has_rating'])))\n  by bin(timestamp, 1d)\n| extend approval_pct = todouble(approved) / total * 100.0\n| project timestamp, approval_pct, avg_rating\n| order by timestamp asc",
+        "size": 1,
+        "title": "HITL approval rate (%) + avg manager rating",
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.insights/components",
+        "visualization": "linechart"
+      },
+      "name": "metric-hitl-approval"
     }
   ],
   "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
