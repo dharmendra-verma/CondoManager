@@ -24,7 +24,7 @@ import os
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from .schema import Ticket
+from .schema import Ticket, TicketStatus
 
 _log = logging.getLogger(__name__)
 
@@ -45,6 +45,27 @@ class TicketRepository(Protocol):
         """Return tickets for ``(tenant_id, unit)`` created at/after ``since``."""
         ...
 
+    def get(self, tenant_id: str, ticket_id: str) -> Ticket | None:
+        """Return the ticket ``(tenant_id, ticket_id)``, or ``None`` if absent."""
+        ...
+
+    def resolve(
+        self,
+        tenant_id: str,
+        ticket_id: str,
+        *,
+        now: datetime,
+        owner: str | None = None,
+    ) -> Ticket | None:
+        """Transition a ticket to RESOLVED, stamping ``resolved_at``/``updated_at``.
+
+        Returns the resolved ticket, or ``None`` when the id is unknown. This is
+        the single TTM (time-to-mitigate) capture point — ``resolved_at`` minus
+        ``created_at`` is the outcome metric (CM-46). ``owner`` optionally
+        records who resolved it; left unchanged when omitted.
+        """
+        ...
+
 
 class InMemoryTicketRepository:
     """Process-local ticket store for tests and the offline demo."""
@@ -61,6 +82,35 @@ class InMemoryTicketRepository:
             for t in self._by_tenant.get(tenant_id, [])
             if t.unit == unit and t.created_at >= since
         ]
+
+    def get(self, tenant_id: str, ticket_id: str) -> Ticket | None:
+        for t in self._by_tenant.get(tenant_id, []):
+            if t.id == ticket_id:
+                return t
+        return None
+
+    def resolve(
+        self,
+        tenant_id: str,
+        ticket_id: str,
+        *,
+        now: datetime,
+        owner: str | None = None,
+    ) -> Ticket | None:
+        items = self._by_tenant.get(tenant_id, [])
+        for i, t in enumerate(items):
+            if t.id == ticket_id:
+                resolved = t.model_copy(
+                    update={
+                        "status": TicketStatus.RESOLVED,
+                        "resolved_at": now,
+                        "updated_at": now,
+                        "owner": owner if owner is not None else t.owner,
+                    }
+                )
+                items[i] = resolved
+                return resolved
+        return None
 
 
 class CosmosTicketRepository:
@@ -108,6 +158,39 @@ class CosmosTicketRepository:
             _log.warning("recent_for_unit Cosmos query failed: %s", e)
             return []
         return [_from_doc(r) for r in rows]
+
+    def get(self, tenant_id: str, ticket_id: str) -> Ticket | None:
+        # Point read on (id, partition_key) — the cheapest Cosmos read path.
+        try:
+            doc = self._container.read_item(item=ticket_id, partition_key=tenant_id)
+        except Exception as e:  # noqa: BLE001
+            # Missing item or a transient read failure: treat as "not found"
+            # and log rather than propagate a 404/500 to the caller.
+            _log.warning("get ticket %s failed: %s", ticket_id, e)
+            return None
+        return _from_doc(doc)
+
+    def resolve(
+        self,
+        tenant_id: str,
+        ticket_id: str,
+        *,
+        now: datetime,
+        owner: str | None = None,
+    ) -> Ticket | None:
+        ticket = self.get(tenant_id, ticket_id)
+        if ticket is None:
+            return None
+        resolved = ticket.model_copy(
+            update={
+                "status": TicketStatus.RESOLVED,
+                "resolved_at": now,
+                "updated_at": now,
+                "owner": owner if owner is not None else ticket.owner,
+            }
+        )
+        self._container.upsert_item(_to_doc(resolved))
+        return resolved
 
 
 def _to_doc(ticket: Ticket) -> dict[str, Any]:

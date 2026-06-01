@@ -251,6 +251,40 @@ def find_open_duplicate(
     return max(matches, key=lambda t: t.created_at)
 
 
+def find_resolved_recurrence(
+    *,
+    unit: str,
+    issue_text: str,
+    existing: list[Ticket],
+    now: datetime,
+) -> Ticket | None:
+    """Most recent RESOLVED same-unit/category ticket in the window — a follow-up.
+
+    A *fresh* ticket that recurs against a previously **RESOLVED** issue is a
+    follow-up contact: the fix didn't hold, or the tenant came back. This is the
+    quantity the follow-up-reduction PRD outcome metric measures (CM-46), and is
+    deliberately distinct from :func:`find_open_duplicate` (which only matches
+    OPEN tickets and would short-circuit ticket creation). The window is the same
+    created-at ``DEDUP_WINDOW_DAYS`` the rest of the module uses; ``resolved_at``
+    now exists on the ticket and can later tighten this to "resolved within N
+    days" without touching callers.
+    """
+    cat = categorize(issue_text)
+    if unit == UNKNOWN_UNIT:
+        return None
+    matches = [
+        t
+        for t in existing
+        if t.status is TicketStatus.RESOLVED
+        and t.unit == unit
+        and categorize(t.issue_text) == cat
+        and 0 <= _age_days(t.created_at, now) <= DEDUP_WINDOW_DAYS
+    ]
+    if not matches:
+        return None
+    return max(matches, key=lambda t: t.created_at)
+
+
 def is_repeat(
     *,
     unit: str,

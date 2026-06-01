@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from agents.channels.base import NormalizationError
 from agents.channels.schema import Channel, NormalizedMessage
+from agents.observability import METRIC_ACK_LATENCY, emit_metric
 
 
 class WebAdapter:
@@ -56,8 +57,22 @@ class WebAdapter:
             "received_by_us_at": dt.datetime.now(dt.UTC),
         }
         try:
-            return NormalizedMessage.model_validate(payload)
+            message = NormalizedMessage.model_validate(payload)
         except ValidationError as exc:
             # Single catchable for the HTTP layer; leaks no Pydantic
             # internals to the client beyond the short error message.
             raise NormalizationError(str(exc)) from exc
+
+        # CM-46: ack-latency PRD signal (<2s SLO). This is the entry layer, so
+        # the honest measure is the channel→us acknowledgement budget already
+        # computed by ``NormalizedMessage.latency_ms``. ``tenant_id`` is passed
+        # explicitly because the CM-21 correlation ContextVar may not be set
+        # this early. No-op when OTel is unconfigured. Future channel adapters
+        # copy this one emit (web.py is the reference adapter).
+        emit_metric(
+            METRIC_ACK_LATENCY,
+            value=message.latency_ms,
+            channel=message.channel.value,
+            tenant_id=message.tenant_id,
+        )
+        return message
