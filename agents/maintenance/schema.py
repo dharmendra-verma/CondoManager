@@ -61,6 +61,12 @@ class Ticket(BaseModel):
     owner: str | None = None
     created_at: datetime
     updated_at: datetime
+    # CM-46: lifecycle timestamp set when the ticket transitions to RESOLVED
+    # (see :func:`agents.maintenance.repository.TicketRepository.resolve`). The
+    # source of truth for time-to-mitigate (TTM) — ``resolved_at - created_at``.
+    # Optional + defaults ``None`` so existing tickets / Cosmos docs without it
+    # validate unchanged; analyzers treat a missing value as "unresolved".
+    resolved_at: datetime | None = None
     request_id: str | None = None
     duplicate_of: str | None = None
     eta: str | None = None

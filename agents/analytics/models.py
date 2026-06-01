@@ -71,6 +71,36 @@ class ContractorScore(BaseModel):
     avg_response_hours: float | None = None
 
 
+class TtmBaseline(BaseModel):
+    """Time-to-mitigate baseline over resolved tickets in the window (CM-46).
+
+    The PRD targets an 80% TTM reduction; this snapshot captures the *current*
+    baseline so the reduction is measurable as resolutions accrue. ``n_resolved
+    == 0`` means no resolved-ticket data yet — the medians stay ``None``
+    ("pending data"), never a fabricated number.
+    """
+
+    n_resolved: int
+    median_hours: float | None = None
+    p90_hours: float | None = None
+    window_days: int
+
+
+class FollowupRate(BaseModel):
+    """Share of resolved tickets that saw a same-unit/category recurrence (CM-46).
+
+    The baseline for the follow-up-reduction PRD metric: of tickets resolved in
+    the window, how many were followed by another report of the same issue at the
+    same unit within ``window_days`` of resolution. ``n_resolved == 0`` ⇒
+    ``rate`` is ``None`` (pending data).
+    """
+
+    n_resolved: int
+    n_followups: int
+    rate: float | None = None
+    window_days: int
+
+
 class SentimentPoint(BaseModel):
     """One ISO-week bucket of escalation signal (the sentiment proxy, AC #3)."""
 

@@ -27,19 +27,23 @@ from __future__ import annotations
 
 from .analyze import (
     detect_recurring,
+    followup_rate,
     predictive_flags,
     score_contractors,
     sentiment_trend,
+    ttm_baseline,
 )
 from .digest import build_digest, render_digest_text
 from .models import (
     ContractorScore,
     DigestReport,
     EscalationEvent,
+    FollowupRate,
     PredictiveFlag,
     RecurringIssue,
     SentimentPoint,
     SentimentTrend,
+    TtmBaseline,
     WeeklyDigest,
 )
 from .repository import (
@@ -67,6 +71,7 @@ __all__ = [
     "DigestReport",
     "DigestStore",
     "EscalationEvent",
+    "FollowupRate",
     "InMemoryAnalyticsReader",
     "LogDigestNotifier",
     "NoopDigestStore",
@@ -75,9 +80,11 @@ __all__ = [
     "SentimentPoint",
     "SentimentTrend",
     "SlackDigestNotifier",
+    "TtmBaseline",
     "WeeklyDigest",
     "build_digest",
     "detect_recurring",
+    "followup_rate",
     "get_analytics_reader",
     "get_digest_notifier",
     "get_digest_store",
@@ -86,4 +93,5 @@ __all__ = [
     "run_digest",
     "score_contractors",
     "sentiment_trend",
+    "ttm_baseline",
 ]

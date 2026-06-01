@@ -30,10 +30,14 @@ METRIC_ACK_LATENCY = "metric.ack_latency_ms"
 METRIC_TRIAGE_ROUTE = "metric.triage.route"
 METRIC_KNOWLEDGE_ANSWERED = "metric.knowledge.answered"
 METRIC_KNOWLEDGE_REFUSED = "metric.knowledge.refused"
+METRIC_MAINTENANCE_DEDUP = "metric.maintenance.dedup"
 METRIC_VENDOR_AUTO_DISPATCH = "metric.vendor.auto_dispatch"
 METRIC_VENDOR_HITL = "metric.vendor.hitl"
 METRIC_ESCALATION_LEGAL_FLAG = "metric.escalation.legal_flag"
 METRIC_HITL_RATING = "metric.hitl.rating"
+# CM-46: outcome-metric lifecycle signals (need resolved-ticket data).
+METRIC_TTM_RESOLUTION_MS = "metric.ttm_resolution_ms"
+METRIC_FOLLOWUP = "metric.followup"
 
 
 def emit_metric(name: str, value: float = 1.0, **attrs: Any) -> None:

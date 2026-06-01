@@ -40,10 +40,15 @@ from agents.knowledge import (
 )
 from agents.knowledge.rag import REFUSAL_TEXT
 from agents.observability import (
+    METRIC_ESCALATION_LEGAL_FLAG,
+    METRIC_FOLLOWUP,
     METRIC_HITL_RATING,
     METRIC_KNOWLEDGE_ANSWERED,
     METRIC_KNOWLEDGE_REFUSED,
+    METRIC_MAINTENANCE_DEDUP,
     METRIC_TRIAGE_ROUTE,
+    METRIC_VENDOR_AUTO_DISPATCH,
+    METRIC_VENDOR_HITL,
     emit_metric,
     langgraph_node_span,
 )
@@ -210,7 +215,29 @@ def maintenance(state: AgentState) -> dict[str, Any]:
         # in isolation, mirroring the rest of the codebase's seam style).
         from agents.maintenance import MaintenanceAgent  # noqa: PLC0415
 
-        return MaintenanceAgent().handle(state)
+        result = MaintenanceAgent().handle(state)
+        output = result.get("output", {})
+        status = output.get("status")
+        # CM-46: dedup precision signal — one event per maintenance decision,
+        # ``outcome`` distinguishing a deduped report from a fresh ticket. The
+        # offline ``maintenance.dedup_precision`` eval gates the same quantity.
+        if status in ("duplicate", "ticket_created"):
+            emit_metric(
+                METRIC_MAINTENANCE_DEDUP,
+                outcome="duplicate" if status == "duplicate" else "new",
+                category=output.get("category"),
+                is_repeat=bool(output.get("is_repeat", False)),
+            )
+        # CM-46: follow-up signal — a fresh ticket that recurs against a
+        # previously-RESOLVED issue (the fix didn't hold / the tenant came
+        # back). Feeds the follow-up-reduction outcome metric.
+        if output.get("is_followup"):
+            emit_metric(
+                METRIC_FOLLOWUP,
+                category=output.get("category"),
+                prior_ticket_id=output.get("followup_of"),
+            )
+        return result
 
 
 def vendor(state: AgentState) -> dict[str, Any]:
@@ -228,7 +255,25 @@ def vendor(state: AgentState) -> dict[str, Any]:
             return _guardrail_termination(gate.reason)
         from agents.vendor import VendorAgent  # noqa: PLC0415
 
-        return VendorAgent().handle(state)
+        result = VendorAgent().handle(state)
+        output = result.get("output") or {}
+        vendor_status = output.get("vendor_status")
+        # CM-46: auto-dispatch rate — one event per vendor decision so the
+        # ``auto_dispatch vs hitl`` share is dashboardable. ``no_vendor`` and
+        # the pass-through (duplicate / guardrail) cases emit nothing.
+        if vendor_status == "auto_dispatched":
+            emit_metric(
+                METRIC_VENDOR_AUTO_DISPATCH,
+                category=output.get("category"),
+                vendor_id=output.get("vendor_id"),
+            )
+        elif vendor_status == "pending_approval":
+            emit_metric(
+                METRIC_VENDOR_HITL,
+                category=output.get("category"),
+                vendor_id=output.get("vendor_id"),
+            )
+        return result
 
 
 def escalation(state: AgentState) -> dict[str, Any]:
@@ -270,6 +315,16 @@ def escalation(state: AgentState) -> dict[str, Any]:
         )
         get_escalation_store().save(record)
         notified = get_manager_notifier().notify(record)
+
+        # CM-46: legal-flag signal — emitted only when the semantic legal-risk
+        # flag is raised, so legal-flag recall is measurable in prod against the
+        # offline ``escalation.legal_recall`` gate.
+        if record.legal_risk:
+            emit_metric(
+                METRIC_ESCALATION_LEGAL_FLAG,
+                category=record.category.value,
+                severity=record.severity,
+            )
 
         return {
             "escalation": record,

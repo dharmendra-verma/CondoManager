@@ -14,6 +14,12 @@ import pytest
 from agents.maintenance import notifier as notifier_mod
 from agents.maintenance import repository as repo_mod
 from agents.maintenance.schema import Priority, Ticket, TicketStatus
+from agents.observability import instrumentation, sdk
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +29,41 @@ def reset_seams() -> Generator[None, None, None]:
     yield
     repo_mod._reset_for_tests()
     notifier_mod._reset_for_tests()
+
+
+def _reset_otel_globals() -> None:
+    """Hard-reset OTel's set-once tracer-provider guard (CM-21 pattern)."""
+    for once_attr in ("_TRACER_PROVIDER_SET_ONCE", "_TRACER_PROVIDER_SET_ONCE_DONE"):
+        once = getattr(trace, once_attr, None)
+        if once is not None and hasattr(once, "_done"):
+            once._done = False
+    trace._TRACER_PROVIDER = None  # type: ignore[attr-defined]
+
+
+@pytest.fixture(autouse=True)
+def reset_otel() -> Generator[None, None, None]:
+    sdk._reset_for_tests()
+    instrumentation._reset_for_tests()
+    _reset_otel_globals()
+    yield
+    sdk._reset_for_tests()
+    instrumentation._reset_for_tests()
+    _reset_otel_globals()
+
+
+@pytest.fixture
+def in_memory_spans() -> Generator[InMemorySpanExporter, None, None]:
+    """Install an in-memory exporter on a fresh TracerProvider (CM-46 TTM emit)."""
+    exporter = InMemorySpanExporter()
+    resource = Resource.create(
+        {"service.name": "maintenance-test", "deployment.environment": "test"}
+    )
+    provider = TracerProvider(resource=resource)
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+    sdk._initialized = True
+    yield exporter
+    exporter.clear()
 
 
 @pytest.fixture

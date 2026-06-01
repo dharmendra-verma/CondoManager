@@ -693,6 +693,36 @@ in App Insights as a row in `customEvents`. The literal event names
 ones the alert rules query for — stay on those names so the alerts
 fire automatically when the producer story ships.
 
+#### PRD success-metric events (CM-39 / CM-46)
+
+`agents.observability.emit_metric(name, value=1.0, **attrs)` lands one
+`customEvents` row per PRD signal — same table + KQL the CM-25 workbook
+queries. Every event carries `metric.value` + correlation (`request_id`,
+`tenant_id`); `None` attrs are dropped. No-op-safe when OTel is unconfigured.
+The event-name constants live in `agents/observability/metrics.py`; emission
+lives in the orchestrator node next to the span/guardrail contract (the one
+exception is ack-latency, emitted at the channel-adapter entry layer).
+
+| Event name | Emitted by | `value` | Key attrs |
+|---|---|---|---|
+| `metric.triage.route` | triage node | 1.0 | `intent`, `route` |
+| `metric.knowledge.answered` / `.refused` | knowledge node | 1.0 | `confidence` |
+| `metric.maintenance.dedup` | maintenance node | 1.0 | `outcome` ∈ {new, duplicate}, `category`, `is_repeat` |
+| `metric.vendor.auto_dispatch` / `.hitl` | vendor node | 1.0 | `category`, `vendor_id` |
+| `metric.escalation.legal_flag` | escalation node (only when flagged) | 1.0 | `category`, `severity` |
+| `metric.ack_latency_ms` | `WebAdapter` (entry layer) | channel→us latency ms | `channel`, `tenant_id` |
+| `metric.ttm_resolution_ms` | `resolve_ticket()` | `resolved_at − created_at` ms (≥0) | `category`, `priority` |
+| `metric.followup` | maintenance node (recurrence vs RESOLVED) | 1.0 | `category`, `prior_ticket_id` |
+| `metric.hitl.rating` | `hitl_review` node | rating or 1.0 | `decision`, `category`, `legal_risk`, `has_rating` |
+
+The TTM + follow-up events are the **outcome** metrics — they only accrue once
+tickets are resolved (`Ticket.resolved_at`, stamped by the
+`TicketRepository.resolve()` seam). `agents.analytics.ttm_baseline()` /
+`followup_rate()` compute the current baselines from the `tickets` store;
+`infra/scripts/outcome-baselines.py` prints them for an operator (reporting
+"pending data" rather than a fabricated number when there are no resolutions
+yet). Efficiency gain has no runtime event — it is a manual manager time study.
+
 ### Why RG-scoped budget pre-OpenAI
 
 The AC mentions "monthly Azure OpenAI spend" but no
