@@ -42,19 +42,21 @@ def _chunk_doc(doc_id: str, idx: int, text: str = "policy text") -> dict[str, ob
     ).model_dump()
 
 
-def test_search_chunks_builds_vector_query_and_maps_distance() -> None:
+def test_search_chunks_builds_vector_query_and_maps_score() -> None:
     store, vector, _state = _make_store()
+    # CM-47: the projected value is the cosine *similarity* (VectorDistance),
+    # passed through verbatim by search_chunks — 0.9 is a strong match.
     vector.query_items.return_value = iter(
-        [{"chunk": _chunk_doc("d1", 0), "_distance": 0.25}]
+        [{"chunk": _chunk_doc("d1", 0), "_score": 0.9}]
     )
 
     out = store.search_chunks("t1", [0.1, 0.2, 0.3], top_k=3)
 
     assert len(out) == 1
-    chunk, distance = out[0]
+    chunk, score = out[0]
     assert isinstance(chunk, VectorChunk)
     assert chunk.doc_id == "d1"
-    assert distance == 0.25
+    assert score == 0.9
 
     call = vector.query_items.call_args
     assert "VectorDistance(c.embedding, @qv)" in call.kwargs["query"]

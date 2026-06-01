@@ -15,6 +15,7 @@ Public API:
 from __future__ import annotations
 
 from .agent import MaintenanceAgent
+from .lifecycle import resolve_ticket
 from .notifier import Notifier, get_notifier
 from .repository import TicketRepository, get_ticket_repository
 from .schema import Priority, Ticket, TicketStatus
@@ -28,4 +29,5 @@ __all__ = [
     "TicketStatus",
     "get_notifier",
     "get_ticket_repository",
+    "resolve_ticket",
 ]

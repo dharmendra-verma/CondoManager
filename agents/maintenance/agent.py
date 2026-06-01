@@ -86,6 +86,12 @@ class MaintenanceAgent:
             }
 
         repeat = dedup.is_repeat(unit=unit, issue_text=text, existing=existing, now=now)
+        # CM-46: a fresh ticket recurring against a previously-RESOLVED issue is
+        # a follow-up contact. Surfaced on the output so the node can emit the
+        # follow-up outcome metric without re-querying or importing observability.
+        followup = dedup.find_resolved_recurrence(
+            unit=unit, issue_text=text, existing=existing, now=now
+        )
         priority = assign_priority(state.urgency, state.tone, is_repeat=repeat)
         eta = estimate_eta(priority, category)
         ticket = Ticket(
@@ -114,6 +120,8 @@ class MaintenanceAgent:
                 "priority": str(priority),
                 "eta": eta,
                 "is_repeat": repeat,
+                "is_followup": followup is not None,
+                "followup_of": followup.id if followup is not None else None,
                 "confirmation": tenant_confirmation(ticket),
             }
         }

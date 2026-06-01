@@ -118,6 +118,14 @@ class EscalationRecord(BaseModel):
     # Every escalation routes through HITL; legal_risk makes that mandatory
     # (no auto-approve path exists — see hitl_review + the CM-32 legal gate).
     hitl_required: bool = True
+    # CM-44: the manager's HITL feedback, captured on resume in ``hitl_review``.
+    # ``manager_rating`` is an optional quality score (e.g. 1–5; ``None`` = decided
+    # but unrated); ``rated_at`` is an ISO-8601 UTC timestamp. The decision itself
+    # (approve/reject) is carried by ``status`` — not duplicated here. All
+    # JSON-primitive so the record still upserts cleanly into Cosmos.
+    manager_rating: int | None = None
+    rating_comment: str = ""
+    rated_at: str | None = None
 
 
 class AgentState(BaseModel):

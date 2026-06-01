@@ -97,17 +97,20 @@ def _fuse(
     """Reciprocal Rank Fusion over the vector + keyword rank lists.
 
     Each list contributes ``1 / (RRF_K + rank)`` per chunk id; scores sum
-    across lists. Vector hits also carry a cosine ``similarity`` (``1 -
-    distance``, clamped) used downstream for answer confidence — keyword-only
-    hits get similarity 0.0.
+    across lists. Vector hits also carry a cosine ``similarity`` — the raw
+    ``VectorDistance`` cosine score (``1.0`` = identical), clamped to [0, 1] —
+    used downstream for answer confidence; keyword-only hits get similarity 0.0.
     """
     scores: dict[str, float] = {}
     sims: dict[str, float] = {}
     chunks: dict[str, VectorChunk] = {}
 
-    for rank, (chunk, distance) in enumerate(vector_hits):
+    for rank, (chunk, score) in enumerate(vector_hits):
         scores[chunk.id] = scores.get(chunk.id, 0.0) + 1.0 / (RRF_K + rank + 1)
-        sims[chunk.id] = max(0.0, min(1.0, 1.0 - distance))
+        # CM-47: ``score`` is the cosine *similarity* from VectorDistance
+        # (1.0 = identical), NOT a distance — use it directly, clamped to [0, 1].
+        # (The old ``1 - score`` inverted it and refused on the best matches.)
+        sims[chunk.id] = max(0.0, min(1.0, score))
         chunks[chunk.id] = chunk
 
     for rank, chunk in enumerate(keyword_hits):

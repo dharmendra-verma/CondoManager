@@ -1385,6 +1385,33 @@ for f in "${SECURITY_FILES[@]}"; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# CM-45 — PRD-metric dashboards (workbook panel group + LangSmith seed breadth)
+#
+# Guards the new "PRD metrics" workbook panels (slugs + the metric.* event
+# contract they query) and that the LangSmith seed script covers all five
+# golden datasets — the CM-25/CM-18 drift-guard style. ($WB_JSON, $PY, $LS_SEED
+# are defined in the CM-25 / main.parameters / CM-23 sections above.)
+# ---------------------------------------------------------------------------
+
+echo "▶  Verifying workbook carries the CM-45 PRD-metric panel slugs"
+PRD_PANEL_SLUGS=(
+  "prd-metrics-header"
+  "metric-triage-routing"
+  "metric-knowledge-self-service"
+  "metric-vendor-auto-dispatch"
+  "metric-escalation-legal-recall"
+  "metric-hitl-approval"
+)
+for slug in "${PRD_PANEL_SLUGS[@]}"; do
+  if grep -Fq "\"$slug\"" "$WB_JSON"; then
+    echo "   ✓ panel '$slug' present"
+  else
+    echo "   ✗ panel '$slug' MISSING from workbook-payload.json"
+    FAIL=1
+  fi
+done
+
 echo "▶  Verifying tests/eval/security_pii_seed.jsonl exists and is non-empty (CM-38 AC1)"
 PII_SEED="$ROOT/tests/eval/security_pii_seed.jsonl"
 if [ -s "$PII_SEED" ]; then
@@ -1397,6 +1424,45 @@ if [ -s "$PII_SEED" ]; then
   fi
 else
   echo "   ✗ tests/eval/security_pii_seed.jsonl missing"
+  FAIL=1
+fi
+
+echo "▶  Verifying PRD panels query the metric.* customEvents contract (CM-45)"
+# The panels must hit the customEvents table and reference the live emission
+# names — guards against someone renaming an event without the dashboard.
+for token in "customEvents" "metric.triage.route" "metric.knowledge.answered" \
+             "metric.hitl.rating" "metric.vendor.auto_dispatch" "metric.escalation.legal_flag"; do
+  if grep -Fq "$token" "$WB_JSON"; then
+    echo "   ✓ payload references '$token'"
+  else
+    echo "   ✗ payload MISSING reference to '$token'"
+    FAIL=1
+  fi
+done
+
+echo "▶  Verifying seed-langsmith-dataset.py seeds all five golden datasets (CM-45)"
+SEED_FILES=("triage_seed.jsonl" "maintenance_dedup_seed.jsonl" "escalation_seed.jsonl" \
+            "knowledge_seed.jsonl" "vendor_match_seed.jsonl")
+for sf in "${SEED_FILES[@]}"; do
+  if grep -Fq "$sf" "$LS_SEED"; then
+    echo "   ✓ seed script references '$sf'"
+  else
+    echo "   ✗ seed script does NOT reference '$sf' — dataset not seeded"
+    FAIL=1
+  fi
+done
+if grep -Eq "DATASETS[[:space:]]*:[[:space:]]*dict" "$LS_SEED" && grep -Fq -e "--only" "$LS_SEED"; then
+  echo "   ✓ DATASETS map + --only filter present"
+else
+  echo "   ✗ seed script missing the DATASETS map or --only filter"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-langsmith-dataset.py is syntactically valid (CM-45)"
+if "$PY" -m py_compile "$LS_SEED" 2>/dev/null; then
+  echo "   ✓ seed script compiles (py_compile)"
+else
+  echo "   ✗ seed-langsmith-dataset.py has a syntax error"
   FAIL=1
 fi
 

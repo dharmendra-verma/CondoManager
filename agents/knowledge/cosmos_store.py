@@ -102,15 +102,18 @@ class CosmosVectorStore:
     ) -> list[tuple[VectorChunk, float]]:
         """Vector-similarity search via the DiskANN ``VectorDistance()`` index.
 
-        Returns up to ``top_k`` ``(chunk, distance)`` pairs nearest to
-        ``embedding``, ascending by distance (nearest first), scoped to the
-        tenant partition. ``top_k`` is interpolated as an int (Cosmos ``TOP``
-        does not accept a bound parameter) — it is code-supplied, never user
-        input, so this is not an injection vector.
+        Returns up to ``top_k`` ``(chunk, score)`` pairs ordered most-similar
+        first, scoped to the tenant partition. ``score`` is the cosine
+        ``VectorDistance`` value, which is a *similarity* (``1.0`` = identical),
+        not a distance (CM-42); a bare ``ORDER BY VectorDistance(...)`` already
+        ranks by descending similarity, so do NOT add ``DESC``. ``top_k`` is
+        interpolated as an int (Cosmos ``TOP`` does not accept a bound
+        parameter) — it is code-supplied, never user input, so this is not an
+        injection vector.
         """
         query = (
             f"SELECT TOP {int(top_k)} c AS chunk, "
-            "VectorDistance(c.embedding, @qv) AS _distance "
+            "VectorDistance(c.embedding, @qv) AS _score "
             "FROM c WHERE c.tenantId = @t "
             "ORDER BY VectorDistance(c.embedding, @qv)"
         )
@@ -124,7 +127,7 @@ class CosmosVectorStore:
             )
         )
         return [
-            (VectorChunk.model_validate(row["chunk"]), float(row["_distance"]))
+            (VectorChunk.model_validate(row["chunk"]), float(row["_score"]))
             for row in rows
         ]
 

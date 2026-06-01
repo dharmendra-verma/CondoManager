@@ -9,9 +9,13 @@ legal-flagged escalation can never reach END without passing this pause.
 
 from __future__ import annotations
 
+import pytest
+from agents.observability import METRIC_HITL_RATING
 from agents.orchestrator import AgentState, Channel, build_graph
+from agents.orchestrator.escalation_store import NoopEscalationStore
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
 def _initial_state() -> AgentState:
@@ -136,3 +140,101 @@ def test_legal_escalation_sent_only_on_explicit_approval(
     final = graph.invoke(Command(resume={"approved": True, "reviewer": "mgr-1"}), config=config)
     assert final["output"]["sent"] is True
     assert _escalation_status(final) == "approved_sent"
+
+
+# --- CM-44: HITL rating persistence + metric.hitl.rating ---------------------
+
+
+def _rating_span(spans: InMemorySpanExporter):  # noqa: ANN202
+    """Return the one ``metric.hitl.rating`` span, asserting exactly one exists."""
+    hits = [s for s in spans.get_finished_spans() if s.name == METRIC_HITL_RATING]
+    assert len(hits) == 1, f"expected one {METRIC_HITL_RATING} span, got {len(hits)}"
+    return hits[0]
+
+
+def _run_review(graph, config, resume):  # noqa: ANN001
+    """Drive escalation → pause → resume with ``resume`` and return the final state."""
+    graph.invoke(_initial_state(), config=config)
+    return graph.invoke(Command(resume=resume), config=config)
+
+
+def test_approve_with_rating_persists_and_emits(
+    memory_checkpointer: MemorySaver,
+    in_memory_spans: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Approve + rating: record persisted (approved_sent + rating) and exactly one
+    ``metric.hitl.rating`` (decision=approve, value=5) is emitted."""
+    store = NoopEscalationStore()
+    monkeypatch.setattr("agents.orchestrator.nodes.get_escalation_store", lambda: store)
+    graph = build_graph(checkpointer=memory_checkpointer)
+    config = {"configurable": {"thread_id": "thr-rate-1"}}
+
+    final = _run_review(
+        graph, config, {"approved": True, "rating": 5, "comment": "clear and empathetic"}
+    )
+
+    assert final["output"]["sent"] is True
+    assert _escalation_status(final) == "approved_sent"
+
+    rated = store.recent("t-1")
+    assert len(rated) == 1  # record_rating replaced the pending record in place
+    rec = rated[0]
+    assert rec.status == "approved_sent"
+    assert rec.manager_rating == 5
+    assert rec.rating_comment == "clear and empathetic"
+    assert rec.rated_at is not None
+
+    span = _rating_span(in_memory_spans)
+    assert span.attributes["decision"] == "approve"
+    assert span.attributes["metric.value"] == 5.0
+    assert span.attributes["has_rating"] is True
+
+
+def test_reject_with_rating_persists_reject_decision(
+    memory_checkpointer: MemorySaver,
+    in_memory_spans: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject + rating: record ``rejected``, rating kept, metric decision=reject."""
+    store = NoopEscalationStore()
+    monkeypatch.setattr("agents.orchestrator.nodes.get_escalation_store", lambda: store)
+    graph = build_graph(checkpointer=memory_checkpointer)
+    config = {"configurable": {"thread_id": "thr-rate-2"}}
+
+    final = _run_review(graph, config, {"approved": False, "rating": 2})
+
+    assert final["output"]["sent"] is False
+    assert _escalation_status(final) == "rejected"
+
+    rec = store.recent("t-1")[0]
+    assert rec.status == "rejected"
+    assert rec.manager_rating == 2
+
+    span = _rating_span(in_memory_spans)
+    assert span.attributes["decision"] == "reject"
+    assert span.attributes["metric.value"] == 2.0
+
+
+def test_bare_bool_resume_records_no_rating_but_emits_metric(
+    memory_checkpointer: MemorySaver,
+    in_memory_spans: InMemorySpanExporter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare-bool resume carries no rating, but the decision is still measured."""
+    store = NoopEscalationStore()
+    monkeypatch.setattr("agents.orchestrator.nodes.get_escalation_store", lambda: store)
+    graph = build_graph(checkpointer=memory_checkpointer)
+    config = {"configurable": {"thread_id": "thr-rate-3"}}
+
+    _run_review(graph, config, True)
+
+    rec = store.recent("t-1")[0]
+    assert rec.status == "approved_sent"
+    assert rec.manager_rating is None
+    assert rec.rating_comment == ""
+
+    span = _rating_span(in_memory_spans)
+    assert span.attributes["decision"] == "approve"
+    assert span.attributes["metric.value"] == 1.0
+    assert span.attributes["has_rating"] is False

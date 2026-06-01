@@ -69,11 +69,23 @@ def test_fuse_dedupes_and_ranks_overlap_first() -> None:
     assert ids[0] == c2.id
 
 
-def test_similarity_is_one_minus_distance_clamped() -> None:
+def test_similarity_is_raw_cosine_score() -> None:
+    # CM-47: VectorDistance returns the cosine *similarity* (1.0 = identical),
+    # used directly — NOT 1 - score. A 0.82 score must surface as 0.82.
     c1 = _vc("d1")
-    store = _FakeStore(vector_hits=[(c1, 0.1)], keyword_hits=[])
+    store = _FakeStore(vector_hits=[(c1, 0.82)], keyword_hits=[])
     out = retrieve("q", tenant_id="t1", store=store, embedder=_FakeEmbedder())
-    assert abs(out[0].similarity - 0.9) < 1e-9
+    assert abs(out[0].similarity - 0.82) < 1e-9
+
+
+def test_similarity_clamped_to_unit_interval() -> None:
+    # Float edge / out-of-range cosines clamp into [0, 1].
+    hi, lo = _vc("hi"), _vc("lo")
+    store = _FakeStore(vector_hits=[(hi, 1.5), (lo, -0.3)], keyword_hits=[])
+    out = retrieve("q", tenant_id="t1", store=store, embedder=_FakeEmbedder())
+    sims = {rc.chunk.doc_id: rc.similarity for rc in out}
+    assert sims["hi"] == 1.0
+    assert sims["lo"] == 0.0
 
 
 def test_keyword_only_hit_has_zero_similarity() -> None:
