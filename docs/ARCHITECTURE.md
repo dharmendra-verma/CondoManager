@@ -26,20 +26,35 @@ metrics.
 
 ## 2. The 10,000-foot view
 
-```
-  WhatsApp ──┐
-  Telegram ──┤──► Channel adapters ──► Triage agent ──┬──► Maintenance agent ──► Vendor agent ──┬──► HITL review
-  Email    ──┤      (NormalizedMsg)         │          ├──► Knowledge agent                      │
-  Web form ──┘                              │          └──► Escalation agent ─────────────────────┘
-                                            │                     │
-                                            │         traces/logs │ (all agents → Observability:
-                                            │                     │  App Insights · LangSmith · Langfuse)
-                                            ▼
-                                       Cosmos DB ◄── gdrive-sync (policy vectors, every 30 min)
-                                            │   ◄── analytics-digest (weekly digest → Slack)
-                                            │
-                                            ▼
-                                      Tenant portal
+```mermaid
+flowchart TB
+    subgraph Channels["Channel layer (CM-29)"]
+        WA[WhatsApp] & TG[Telegram] & EM[Email] & WEB[Web form]
+    end
+    Channels -->|NormalizedMessage| ORCH
+
+    subgraph ORCH["LangGraph orchestrator (CM-28)"]
+        TRIAGE[Triage CM-30] --> MAINT[Maintenance CM-31]
+        TRIAGE --> KNOW[Knowledge CM-33]
+        TRIAGE --> ESC[Escalation CM-32]
+        MAINT --> VEND[Vendor CM-35]
+        VEND --> HITL[HITL review]
+        ESC --> HITL
+    end
+
+    KNOW <-->|vector RAG| COSMOS[(Cosmos DB)]
+    MAINT -->|tickets| COSMOS
+    ESC -->|escalations| COSMOS
+    HITL -->|ratings| COSMOS
+
+    subgraph JOBS["Background jobs (Azure Functions)"]
+        GD[gdrive-sync CM-34] -->|policy vectors| COSMOS
+        AN[analytics-digest CM-36] -->|weekly digest| SLACK[Slack]
+    end
+
+    COSMOS --> PORTAL[Tenant status portal CM-37]
+
+    ORCH -.traces/logs/metrics.-> OBS[(Observability:<br/>App Insights · LangSmith · Langfuse)]
 ```
 
 Each box is a doc:
@@ -59,34 +74,37 @@ Each box is a doc:
 This is the single most useful thing to internalize. A tenant texts *"my kitchen
 sink is leaking"*:
 
-```
-  Tenant          Channel         LangGraph        Triage      Maintenance    Vendor       Manager
-    │               │               │                │              │            │            │
-    │ "sink leak"   │               │                │              │            │            │
-    │──────────────►│               │                │              │            │            │
-    │               │ mask PII      │                │              │            │            │
-    │               │ normalize     │                │              │            │            │
-    │               │──────────────►│  AgentState    │              │            │            │
-    │               │               │  + request_id  │              │            │            │
-    │               │               │───────────────►│              │            │            │
-    │               │               │                │ intent=      │            │            │
-    │               │               │                │ maintenance  │            │            │
-    │               │               │                │─────────────►│            │            │
-    │               │               │                │              │ dedup +    │            │
-    │               │               │                │              │ write TKT  │            │
-    │               │               │                │              │───────────►│            │
-    │               │               │                │              │            │ [auto]     │
-    │               │               │                │              │            │ dispatch   │
-    │◄──────────────────────────────────────────────────────────────────────────│            │
-    │  confirmation + ETA            │                │              │            │            │
-    │               │               │                │              │      [needs approval]   │
-    │               │               │                │              │            │───────────►│
-    │               │               │                │              │            │◄───────────│
-    │               │               │                │              │            │  approved  │
-    │◄──────────────────────────────────────────────────────────────────────────│            │
-    │  confirmation + ETA            │                │              │            │            │
-    │               │               │                │              │            │            │
-    │               │         (every step emits a span + log keyed by request_id)             │
+```mermaid
+sequenceDiagram
+    participant T as Tenant
+    participant CH as Channel adapter (CM-29)
+    participant GR as LangGraph spine (CM-28)
+    participant TR as Triage (CM-30)
+    participant MA as Maintenance (CM-31)
+    participant VE as Vendor (CM-35)
+    participant HU as Manager (HITL)
+    participant DB as Cosmos DB
+    participant OB as Observability
+
+    T->>CH: "my kitchen sink is leaking" (+ photo)
+    CH->>CH: mask PII, normalize → NormalizedMessage
+    CH->>GR: AgentState(request_id=req_…, normalized=…)
+    Note over GR,OB: every step below emits a span + log line keyed by request_id
+    GR->>TR: triage node
+    TR->>TR: classify intent=maintenance, urgency, tone
+    TR->>OB: emit_metric(metric.triage.route)
+    GR->>MA: route → maintenance node
+    MA->>DB: dedup check, then write Ticket (TKT-…)
+    MA->>VE: route → vendor node
+    VE->>VE: match contractor + dispatch decision
+    alt auto-dispatch allowed
+        VE->>OB: emit metric.vendor.auto_dispatch
+        VE-->>T: confirmation + ETA
+    else needs approval
+        VE->>HU: pause at hitl_review (interrupt)
+        HU->>VE: approve (+ optional rating → metric.hitl.rating)
+        VE-->>T: confirmation + ETA
+    end
 ```
 
 The **same `request_id`** appears on every log line, every trace span, and every
