@@ -26,40 +26,20 @@ metrics.
 
 ## 2. The 10,000-foot view
 
-```mermaid
-%%{init: {"theme": "base", "themeVariables": {"lineColor": "#333333", "edgeLabelBackground": "#ffffff", "fontSize": "14px"}, "flowchart": {"curve": "basis", "nodeSpacing": 50, "rankSpacing": 60}}}%%
-flowchart TB
-    WA[WhatsApp] --> NORM[Channel adapters]
-    TG[Telegram] --> NORM
-    EM[Email] --> NORM
-    WEB[Web form] --> NORM
-
-    NORM -->|NormalizedMessage| TRIAGE[Triage agent]
-
-    TRIAGE --> MAINT[Maintenance agent]
-    TRIAGE --> KNOW[Knowledge agent]
-    TRIAGE --> ESC[Escalation agent]
-
-    MAINT --> VEND[Vendor agent]
-    VEND --> HITL[HITL review]
-    ESC --> HITL
-
-    KNOW -->|RAG| COSMOS[(Cosmos DB)]
-    MAINT -->|ticket| COSMOS
-    ESC -->|escalation| COSMOS
-    HITL -->|rating| COSMOS
-
-    GD[gdrive-sync] -->|policy vectors| COSMOS
-    AN[analytics-digest] -->|digest| SLACK[Slack]
-
-    COSMOS --> PORTAL[Tenant portal]
-
-    TRIAGE -.->|traces| OBS[Observability]
-    MAINT -.->|traces| OBS
-    KNOW -.->|traces| OBS
-    ESC -.->|traces| OBS
-
-    linkStyle default stroke:#333333,stroke-width:2px
+```
+  WhatsApp ──┐
+  Telegram ──┤──► Channel adapters ──► Triage agent ──┬──► Maintenance agent ──► Vendor agent ──┬──► HITL review
+  Email    ──┤      (NormalizedMsg)         │          ├──► Knowledge agent                      │
+  Web form ──┘                              │          └──► Escalation agent ─────────────────────┘
+                                            │                     │
+                                            │         traces/logs │ (all agents → Observability:
+                                            │                     │  App Insights · LangSmith · Langfuse)
+                                            ▼
+                                       Cosmos DB ◄── gdrive-sync (policy vectors, every 30 min)
+                                            │   ◄── analytics-digest (weekly digest → Slack)
+                                            │
+                                            ▼
+                                      Tenant portal
 ```
 
 Each box is a doc:
@@ -79,38 +59,34 @@ Each box is a doc:
 This is the single most useful thing to internalize. A tenant texts *"my kitchen
 sink is leaking"*:
 
-```mermaid
-%%{init: {"theme": "base", "themeVariables": {"labelBoxBkgColor": "#ffffff", "labelBoxBorderColor": "#333333", "labelTextColor": "#333333", "activationBorderColor": "#333333", "activationBkgColor": "#f0f0f0", "sequenceNumberColor": "#333333"}}}%%
-sequenceDiagram
-    participant T as Tenant
-    participant CH as Channel adapter
-    participant GR as LangGraph spine
-    participant TR as Triage agent
-    participant MA as Maintenance agent
-    participant VE as Vendor agent
-    participant HU as Manager HITL
-    participant DB as Cosmos DB
-    participant OB as Observability
-
-    T->>CH: my kitchen sink is leaking
-    CH->>CH: mask PII and normalize to NormalizedMessage
-    CH->>GR: AgentState with request_id and normalized message
-    Note over GR: every step emits a span and log keyed by request_id
-    GR->>TR: triage node
-    TR->>TR: classify intent as maintenance
-    TR->>OB: emit triage route metric
-    GR->>MA: route to maintenance node
-    MA->>DB: dedup check then write ticket
-    MA->>VE: route to vendor node
-    VE->>VE: match contractor and decide dispatch
-    alt auto-dispatch allowed
-        VE->>OB: emit vendor dispatch metric
-        VE-->>T: confirmation and ETA
-    else needs approval
-        VE->>HU: pause at hitl review
-        HU->>VE: approve with optional rating
-        VE-->>T: confirmation and ETA
-    end
+```
+  Tenant          Channel         LangGraph        Triage      Maintenance    Vendor       Manager
+    │               │               │                │              │            │            │
+    │ "sink leak"   │               │                │              │            │            │
+    │──────────────►│               │                │              │            │            │
+    │               │ mask PII      │                │              │            │            │
+    │               │ normalize     │                │              │            │            │
+    │               │──────────────►│  AgentState    │              │            │            │
+    │               │               │  + request_id  │              │            │            │
+    │               │               │───────────────►│              │            │            │
+    │               │               │                │ intent=      │            │            │
+    │               │               │                │ maintenance  │            │            │
+    │               │               │                │─────────────►│            │            │
+    │               │               │                │              │ dedup +    │            │
+    │               │               │                │              │ write TKT  │            │
+    │               │               │                │              │───────────►│            │
+    │               │               │                │              │            │ [auto]     │
+    │               │               │                │              │            │ dispatch   │
+    │◄──────────────────────────────────────────────────────────────────────────│            │
+    │  confirmation + ETA            │                │              │            │            │
+    │               │               │                │              │      [needs approval]   │
+    │               │               │                │              │            │───────────►│
+    │               │               │                │              │            │◄───────────│
+    │               │               │                │              │            │  approved  │
+    │◄──────────────────────────────────────────────────────────────────────────│            │
+    │  confirmation + ETA            │                │              │            │            │
+    │               │               │                │              │            │            │
+    │               │         (every step emits a span + log keyed by request_id)             │
 ```
 
 The **same `request_id`** appears on every log line, every trace span, and every
