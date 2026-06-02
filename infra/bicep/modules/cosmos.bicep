@@ -121,6 +121,30 @@ resource tenantsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/co
   }
 }
 
+// CM-54: vendor reference data. Partitioned by /id (each vendor is its own
+// document; the Vendor Agent reads by id as a point-read). Shared throughput —
+// small roster (<20 records), low fan-out, no vector indexing. Adding to the
+// shared 600 RU/s pool alongside tenants/tickets/conversations; free-tier
+// ceiling stays at 1000 RU/s (600 shared + 400 dedicated policies-vector).
+resource vendorsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'vendors'
+  properties: {
+    resource: {
+      id: 'vendors'
+      partitionKey: {
+        paths: [ '/id' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+    }
+  }
+}
+
 resource ticketsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
   parent: database
   name: 'tickets'

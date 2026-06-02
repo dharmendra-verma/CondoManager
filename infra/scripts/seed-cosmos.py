@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Seed vendor roster and test tenant into Cosmos DB.
+
+Jira: CM-54  | Phase 0
+
+Upserts all vendors from agents.vendor.seed.seed_vendors() into the `vendors`
+container and writes one test tenant into the `tenants` container. Idempotent —
+safe to re-run on every deploy; existing records are updated in place.
+
+Usage:
+    # Required — set the Cosmos endpoint (no key needed; uses DefaultAzureCredential):
+    export COSMOS_ENDPOINT="https://cosmos-condomanager-dev.documents.azure.com:443/"
+    python infra/scripts/seed-cosmos.py
+
+    # Optional — override the database name (default: condomanager):
+    export COSMOS_DATABASE="condomanager"
+    python infra/scripts/seed-cosmos.py
+
+Auth: DefaultAzureCredential — resolves in order:
+  1. Environment variables (AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID)
+  2. Workload Identity (Container Apps / Functions running as Managed Identity)
+  3. Azure CLI (run `az login` locally)
+
+Exit codes: 0 = all upserts succeeded, 1 = any failure.
+
+Dependencies:
+    pip install "azure-cosmos>=4.7.0" "azure-identity>=1.15.0"
+
+Run from the repository root so the `agents` package is importable:
+    python infra/scripts/seed-cosmos.py
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# Allow running from the repo root without installing the package.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+try:
+    from azure.cosmos import CosmosClient, exceptions
+    from azure.core.exceptions import AzureError, ClientAuthenticationError
+    from azure.identity import DefaultAzureCredential
+except ImportError:
+    sys.stderr.write(
+        "azure-cosmos and azure-identity are required.\n"
+        "Install with: pip install 'azure-cosmos>=4.7.0' 'azure-identity>=1.15.0'\n"
+    )
+    sys.exit(1)
+
+try:
+    from agents.vendor.seed import seed_vendors
+except ImportError as e:
+    sys.stderr.write(
+        f"Cannot import agents.vendor.seed: {e}\n"
+        "Run this script from the repository root directory.\n"
+    )
+    sys.exit(1)
+
+
+DATABASE_NAME = os.getenv("COSMOS_DATABASE", "condomanager")
+
+TEST_TENANT = {
+    "id": "tenant-smoke-test",
+    "name": "Smoke Test Building",
+    "contactEmail": "smoke@example.com",
+    "tier": "standard",
+    "unitCount": 10,
+}
+
+# One ready-made ticket so the portal can be verified before the live
+# channel→triage loop (CM-31/32/33/35) creates real tickets. The portal
+# (CM-37) looks up tickets by document id; /tenantId is the partition key.
+SAMPLE_TICKET = {
+    "id": "TKT-1A2B3C4D",
+    "tenantId": TEST_TENANT["id"],
+    "unit": "A-101",
+    "issue_text": "Kitchen sink is leaking under the cabinet.",
+    "category": "plumbing",
+    "priority": "P3",
+    "status": "In Progress",
+    "owner": "AquaFix Plumbing",
+    "eta": "Tomorrow, 2-4 PM",
+    "created_at": "2026-06-02T09:00:00+00:00",
+    "updated_at": "2026-06-02T10:30:00+00:00",
+    "request_id": "seed-demo-0001",
+    "duplicate_of": None,
+    "history": [],
+}
+
+
+def main() -> int:
+    endpoint = os.environ.get("COSMOS_ENDPOINT")
+    if not endpoint:
+        sys.stderr.write(
+            "ERROR: COSMOS_ENDPOINT is required.\n"
+            "  export COSMOS_ENDPOINT='https://cosmos-condomanager-dev.documents.azure.com:443/'\n"
+        )
+        return 1
+
+    print(f"-> Endpoint: {endpoint}")
+    print(f"-> Database: {DATABASE_NAME}")
+
+    try:
+        credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+        client = CosmosClient(endpoint, credential=credential)
+        db = client.get_database_client(DATABASE_NAME)
+    except Exception as e:
+        sys.stderr.write(f"ERROR: could not build Cosmos client: {e}\n")
+        return 1
+
+    vendors_container = db.get_container_client("vendors")
+    tenants_container = db.get_container_client("tenants")
+    tickets_container = db.get_container_client("tickets")
+
+    vendor_count = 0
+    try:
+        for vendor in seed_vendors():
+            doc = vendor.model_dump()
+            vendors_container.upsert_item(doc)
+            print(f"  [upsert] vendor {vendor.id} ({vendor.name})")
+            vendor_count += 1
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
+    except exceptions.CosmosResourceNotFoundError as e:
+        sys.stderr.write(
+            f"ERROR: `vendors` container not found — is the Bicep deploy complete? {e}\n"
+        )
+        return 1
+    except exceptions.CosmosHttpResponseError as e:
+        sys.stderr.write(f"ERROR: upsert vendor failed: {e}\n")
+        return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during vendor upsert: {e}\n")
+        return 1
+
+    try:
+        tenants_container.upsert_item(TEST_TENANT)
+        print(f"  [upsert] tenant {TEST_TENANT['id']}")
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
+    except exceptions.CosmosResourceNotFoundError as e:
+        sys.stderr.write(
+            f"ERROR: `tenants` container not found — is the Bicep deploy complete? {e}\n"
+        )
+        return 1
+    except exceptions.CosmosHttpResponseError as e:
+        sys.stderr.write(f"ERROR: upsert tenant failed: {e}\n")
+        return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during tenant upsert: {e}\n")
+        return 1
+
+    try:
+        tickets_container.upsert_item(SAMPLE_TICKET)
+        print(f"  [upsert] ticket {SAMPLE_TICKET['id']}")
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
+    except exceptions.CosmosResourceNotFoundError as e:
+        sys.stderr.write(
+            f"ERROR: `tickets` container not found — is the Bicep deploy complete? {e}\n"
+        )
+        return 1
+    except exceptions.CosmosHttpResponseError as e:
+        sys.stderr.write(f"ERROR: upsert ticket failed: {e}\n")
+        return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during ticket upsert: {e}\n")
+        return 1
+
+    print(
+        f"\nPASS: seeded {vendor_count} vendors, 1 test tenant, "
+        f"1 sample ticket ({SAMPLE_TICKET['id']})."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
