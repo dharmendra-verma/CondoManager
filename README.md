@@ -1,5 +1,7 @@
 # CondoManager
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 Multi-agent platform for condominium maintenance & inquiry management. Tenants
 reach the platform over **WhatsApp / Telegram / email / web**; a **LangGraph
 orchestrator** classifies each message and routes it to a specialist agent:
@@ -97,3 +99,7 @@ In short: **act, then report**. Don't ask permission for every step.
 * **PR titles:** include the Jira key so smart commits sync status to Jira.
 
 See [`CLAUDE.md`](CLAUDE.md) §3 for the full set of conventions.
+
+## License
+
+[MIT](LICENSE) © 2026 Dharmendra Verma
