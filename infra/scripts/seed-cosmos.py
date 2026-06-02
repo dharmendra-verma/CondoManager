@@ -41,7 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
     from azure.cosmos import CosmosClient, exceptions
-    from azure.core.exceptions import ClientAuthenticationError
+    from azure.core.exceptions import AzureError, ClientAuthenticationError
     from azure.identity import DefaultAzureCredential
 except ImportError:
     sys.stderr.write(
@@ -115,6 +115,9 @@ def main() -> int:
     except exceptions.CosmosHttpResponseError as e:
         sys.stderr.write(f"ERROR: upsert vendor failed: {e}\n")
         return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during vendor upsert: {e}\n")
+        return 1
 
     try:
         tenants_container.upsert_item(TEST_TENANT)
@@ -132,6 +135,9 @@ def main() -> int:
         return 1
     except exceptions.CosmosHttpResponseError as e:
         sys.stderr.write(f"ERROR: upsert tenant failed: {e}\n")
+        return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during tenant upsert: {e}\n")
         return 1
 
     print(f"\nPASS: seeded {vendor_count} vendors, 1 test tenant.")

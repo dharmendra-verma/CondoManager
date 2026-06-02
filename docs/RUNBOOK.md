@@ -199,13 +199,15 @@ az keyvault secret set --vault-name $VAULT \
 az keyvault secret set --vault-name $VAULT \
   --name google-drive-sa-key --value "$(cat /path/to/service-account.json)"
 
+COSMOS_CONN=$(az cosmosdb keys list \
+  --name cosmos-condomanager-dev \
+  --resource-group rg-condomanager \
+  --type connection-strings \
+  --query 'connectionStrings[0].connectionString' -o tsv)
+[[ -z "$COSMOS_CONN" ]] && { echo "ERROR: failed to retrieve Cosmos connection string — check deployment and az login"; exit 1; }
 az keyvault secret set --vault-name $VAULT \
   --name cosmos-connection-string \
-  --value "$(az cosmosdb keys list \
-      --name cosmos-condomanager-dev \
-      --resource-group rg-condomanager \
-      --type connection-strings \
-      --query 'connectionStrings[0].connectionString' -o tsv)"
+  --value "$COSMOS_CONN"
 ```
 
 ### 3.3 Seed App Insights connection string
@@ -276,11 +278,15 @@ MASTER_KEY=$(az functionapp keys list \
   --resource-group rg-condomanager \
   --query "masterKey" -o tsv)
 
-curl -s -X POST \
+# Verify the key was retrieved before sending (empty key → 401 with no output):
+[[ -z "$MASTER_KEY" ]] && { echo "ERROR: master key is empty — check az login and RBAC"; exit 1; }
+
+curl -s -w "\nHTTP %{http_code}\n" -X POST \
   "https://func-condomanager-dev.azurewebsites.net/admin/functions/gdrive_sync" \
   -H "x-functions-key: $MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{}'
+# Expected: HTTP 202  (empty body is normal — 202 means the trigger was accepted)
 ```
 
 > **Note:** `az functionapp restart` recycles the host process but does NOT invoke
@@ -551,19 +557,28 @@ print("Guardrail event emitted.")
 
 ### 10.2 Verify the alert fired
 
+The `scheduledQueryRules` resource does not expose a last-fired timestamp via the
+CLI — the resource metadata only tracks when the rule definition was last modified.
+Use the two reliable verification paths instead:
+
+**Primary — Action Group delivery (fastest):**
+Check for the Slack message or email delivered by the Action Group configured in §3.2.
+The alert fires within ~5 minutes of the evaluation window (every 5 minutes per the
+alert rule configuration).
+
+**Secondary — Azure Monitor Activity Log:**
 ```bash
-# Check alert history (may take up to 5 minutes to evaluate).
-# NOTE: this is a scheduledQueryRules resource, not a metrics alert — use
-# 'az monitor scheduled-query show', NOT 'az monitor metrics alert show'.
-az monitor scheduled-query show \
-  --name "alert-guardrail-trip-dev" \
+# Look for alert-fired events in the last 30 minutes:
+az monitor activity-log list \
   --resource-group rg-condomanager \
-  --query "lastModifiedDate" -o tsv
+  --start-time "$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+                  || date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)" \
+  --query "[?contains(operationName.value, 'Microsoft.Insights')].{time:eventTimestamp, op:operationName.value, status:status.value}" \
+  --output table
 ```
 
-**Expected:** a timestamp within the last 10 minutes.
-
-Check the Action Group delivery (Slack / email) configured in §3.2.
+**Expected:** an entry with `operationName` containing `scheduledQueryRules` and
+`status` = `Succeeded` within the last 10 minutes.
 
 ---
 
@@ -653,10 +668,13 @@ Only use if you need a completely clean slate:
 az group delete --name rg-condomanager --yes --no-wait
 ```
 
-> **Warning:** This deletes dev AND prod resources (they share the RG). Cosmos
-> soft-delete (90-day retention) applies to the account but not to the data.
-> Re-running the bootstrap (§1) and deploy (§2) will recreate everything from
-> scratch, but data is gone permanently unless you restored from a backup.
+> **Warning:** This deletes dev AND prod resources (they share the RG). The Cosmos
+> account is configured with **Periodic backup, 8-hour retention** (see
+> `cosmos.bicep` `backupRetentionIntervalInHours: 8`) — data older than 8 hours is
+> unrecoverable after an account deletion. Re-running the bootstrap (§1) and deploy
+> (§2) will recreate the infrastructure from scratch, but existing data is gone
+> permanently unless you opened an Azure support ticket to restore from a Periodic
+> backup before the account was deleted.
 
 ### 12.4 Rollback checklist
 
