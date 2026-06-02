@@ -259,8 +259,9 @@ python infra/scripts/seed-cosmos.py
   [upsert] vendor v-struct-1 (SolidBuild Structural)
   [upsert] vendor v-general-1 (Handy General Services)
   [upsert] tenant tenant-smoke-test
+  [upsert] ticket TKT-1A2B3C4D
 
-PASS: seeded 7 vendors, 1 test tenant.
+PASS: seeded 7 vendors, 1 test tenant, 1 sample ticket (TKT-1A2B3C4D).
 ```
 
 Idempotent — safe to re-run. Second run produces identical output with no errors.
@@ -621,6 +622,22 @@ curl -s "https://$SWA_URL/api/ticket?code=TKT-XXXXXXXX" | python -m json.tool
 
 Open `https://<SWA_URL>/status?code=TKT-XXXXXXXX` in a browser. The ticket
 status card should render with the correct summary and status.
+
+### 11.4 Day-zero check using the seeded sample ticket (no live loop required)
+
+`seed-cosmos.py` (§4.1) upserts one ready-made ticket so the portal can be
+verified before the live channel→triage loop (CM-31/32/33/35) exists. The portal
+API (CM-37) looks up tickets by document `id`:
+
+```bash
+curl -s "https://$SWA_URL/api/ticket?code=TKT-1A2B3C4D" | python -m json.tool
+```
+
+**Expected:** HTTP 200 with `id` = `TKT-1A2B3C4D`, `status` = `In Progress`,
+`eta` = `Tomorrow, 2-4 PM`, `owner` = `AquaFix Plumbing`.
+
+> **Note:** §11.2 assumes a live ticket created by the channel loop. Use §11.4
+> for the deterministic day-zero smoke test before those channels are wired up.
 
 ---
 

@@ -70,6 +70,26 @@ TEST_TENANT = {
     "unitCount": 10,
 }
 
+# One ready-made ticket so the portal can be verified before the live
+# channel→triage loop (CM-31/32/33/35) creates real tickets. The portal
+# (CM-37) looks up tickets by document id; /tenantId is the partition key.
+SAMPLE_TICKET = {
+    "id": "TKT-1A2B3C4D",
+    "tenantId": TEST_TENANT["id"],
+    "unit": "A-101",
+    "issue_text": "Kitchen sink is leaking under the cabinet.",
+    "category": "plumbing",
+    "priority": "P3",
+    "status": "In Progress",
+    "owner": "AquaFix Plumbing",
+    "eta": "Tomorrow, 2-4 PM",
+    "created_at": "2026-06-02T09:00:00+00:00",
+    "updated_at": "2026-06-02T10:30:00+00:00",
+    "request_id": "seed-demo-0001",
+    "duplicate_of": None,
+    "history": [],
+}
+
 
 def main() -> int:
     endpoint = os.environ.get("COSMOS_ENDPOINT")
@@ -93,6 +113,7 @@ def main() -> int:
 
     vendors_container = db.get_container_client("vendors")
     tenants_container = db.get_container_client("tenants")
+    tickets_container = db.get_container_client("tickets")
 
     vendor_count = 0
     try:
@@ -140,7 +161,31 @@ def main() -> int:
         sys.stderr.write(f"ERROR: network or service error during tenant upsert: {e}\n")
         return 1
 
-    print(f"\nPASS: seeded {vendor_count} vendors, 1 test tenant.")
+    try:
+        tickets_container.upsert_item(SAMPLE_TICKET)
+        print(f"  [upsert] ticket {SAMPLE_TICKET['id']}")
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
+    except exceptions.CosmosResourceNotFoundError as e:
+        sys.stderr.write(
+            f"ERROR: `tickets` container not found — is the Bicep deploy complete? {e}\n"
+        )
+        return 1
+    except exceptions.CosmosHttpResponseError as e:
+        sys.stderr.write(f"ERROR: upsert ticket failed: {e}\n")
+        return 1
+    except AzureError as e:
+        sys.stderr.write(f"ERROR: network or service error during ticket upsert: {e}\n")
+        return 1
+
+    print(
+        f"\nPASS: seeded {vendor_count} vendors, 1 test tenant, "
+        f"1 sample ticket ({SAMPLE_TICKET['id']})."
+    )
     return 0
 
 
