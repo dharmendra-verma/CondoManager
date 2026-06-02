@@ -314,6 +314,39 @@ resource digestsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/co
   }
 }
 
+// CM-38: immutable audit trail. One doc per audited action (who/what/when),
+// partitioned by /tenantId like the other tenant-scoped containers. System
+// actions not tied to a tenant partition under "_system" (see AuditEvent.to_doc).
+//
+// defaultTtl: -1 deliberately ENABLES the TTL subsystem but sets NO default
+// expiry — i.e. audit records never auto-purge. This is the explicit
+// "never expires" signal (vs. omitting defaultTtl, which disables TTL silently)
+// and leaves a per-item ttl override available if a future legal-hold policy
+// ever needs one. Cosmos has no native WORM/immutability, so true immutability
+// is layered on top: the app-side sink is append-only (create_item, never
+// upsert/delete — see agents/security/audit.py) and the account rides
+// continuous backup. The split is documented in docs/SECURITY.md.
+resource auditContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-11-15' = {
+  parent: database
+  name: 'audit'
+  properties: {
+    resource: {
+      id: 'audit'
+      partitionKey: {
+        paths: [ '/tenantId' ]
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        includedPaths: [ { path: '/*' } ]
+        excludedPaths: [ { path: '/"_etag"/?' } ]
+      }
+      // -1 = TTL enabled, no default expiry → audit records never auto-purge.
+      defaultTtl: -1
+    }
+  }
+}
+
 output accountName string = account.name
 output accountId string = account.id
 output endpoint string = account.properties.documentEndpoint

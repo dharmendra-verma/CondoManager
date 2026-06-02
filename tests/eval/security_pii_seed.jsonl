@@ -1,0 +1,12 @@
+{"text": "Please contact me at jane.doe@example.com about the leak", "categories": ["email"]}
+{"text": "My number is +14155552671, call anytime", "categories": ["phone"]}
+{"text": "Reach me on +442071838750 or email bob@condo.co.uk", "categories": ["phone", "email"]}
+{"text": "Card on file 4111 1111 1111 1111 for the deposit", "categories": ["credit_card"]}
+{"text": "The integration key sk-ABCDEFGHIJKLMNOP1234 was committed by mistake", "categories": ["api_key"]}
+{"text": "AWS creds AKIAIOSFODNN7EXAMPLE leaked in the log", "categories": ["api_key"]}
+{"text": "ping superintendent at super@building12.com and +13105551212", "categories": ["email", "phone"]}
+{"text": "no personal data in this maintenance note at all", "categories": []}
+{"text": "unit 4B kitchen sink dripping since tuesday", "categories": []}
+{"text": "billing card 5500 0000 0000 0004 declined twice", "categories": ["credit_card"]}
+{"text": "langfuse key pk_lf_abcdefghijklmnopqrstuvwx exposed", "categories": ["api_key"]}
+{"text": "tenant alice@example.org reported +12125550199 as her cell", "categories": ["email", "phone"]}
