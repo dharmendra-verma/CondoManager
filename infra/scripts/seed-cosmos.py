@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
     from azure.cosmos import CosmosClient, exceptions
+    from azure.core.exceptions import ClientAuthenticationError
     from azure.identity import DefaultAzureCredential
 except ImportError:
     sys.stderr.write(
@@ -97,29 +98,40 @@ def main() -> int:
     try:
         for vendor in seed_vendors():
             doc = vendor.model_dump()
-            doc["id"] = vendor.id
             vendors_container.upsert_item(doc)
             print(f"  [upsert] vendor {vendor.id} ({vendor.name})")
             vendor_count += 1
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
     except exceptions.CosmosResourceNotFoundError as e:
         sys.stderr.write(
             f"ERROR: `vendors` container not found — is the Bicep deploy complete? {e}\n"
         )
         return 1
     except exceptions.CosmosHttpResponseError as e:
-        sys.stderr.write(f"ERROR: upsert vendor failed: {e.message}\n")
+        sys.stderr.write(f"ERROR: upsert vendor failed: {e}\n")
         return 1
 
     try:
         tenants_container.upsert_item(TEST_TENANT)
         print(f"  [upsert] tenant {TEST_TENANT['id']}")
+    except ClientAuthenticationError as e:
+        sys.stderr.write(
+            f"ERROR: authentication failed — run 'az login' or set AZURE_CLIENT_ID/SECRET/TENANT_ID.\n"
+            f"  Detail: {e}\n"
+        )
+        return 1
     except exceptions.CosmosResourceNotFoundError as e:
         sys.stderr.write(
             f"ERROR: `tenants` container not found — is the Bicep deploy complete? {e}\n"
         )
         return 1
     except exceptions.CosmosHttpResponseError as e:
-        sys.stderr.write(f"ERROR: upsert tenant failed: {e.message}\n")
+        sys.stderr.write(f"ERROR: upsert tenant failed: {e}\n")
         return 1
 
     print(f"\nPASS: seeded {vendor_count} vendors, 1 test tenant.")

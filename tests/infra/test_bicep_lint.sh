@@ -324,8 +324,8 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying cosmos.bicep declares all five required containers (CM-28 adds 'checkpoints')"
-REQUIRED_CONTAINERS=("tenants" "tickets" "conversations" "policies-vector" "checkpoints")
+echo "▶  Verifying cosmos.bicep declares all required containers (CM-28 adds 'checkpoints', CM-54 adds 'vendors')"
+REQUIRED_CONTAINERS=("tenants" "vendors" "tickets" "conversations" "policies-vector" "checkpoints")
 for c in "${REQUIRED_CONTAINERS[@]}"; do
   # Match the container resource id: `id: 'tenants'`, `id: 'policies-vector'`, …
   if grep -Eq "id:[[:space:]]+'$c'" "$COSMOS"; then

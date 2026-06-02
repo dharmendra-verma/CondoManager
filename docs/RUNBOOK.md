@@ -198,6 +198,14 @@ az keyvault secret set --vault-name $VAULT \
 
 az keyvault secret set --vault-name $VAULT \
   --name google-drive-sa-key --value "$(cat /path/to/service-account.json)"
+
+az keyvault secret set --vault-name $VAULT \
+  --name cosmos-connection-string \
+  --value "$(az cosmosdb keys list \
+      --name cosmos-condomanager-dev \
+      --resource-group rg-condomanager \
+      --type connection-strings \
+      --query 'connectionStrings[0].connectionString' -o tsv)"
 ```
 
 ### 3.3 Seed App Insights connection string
@@ -261,11 +269,23 @@ Trigger the `gdrive-sync` Azure Function to pull policy documents into the
 `policies-vector` container:
 
 ```bash
-# Restart the function app to force an immediate timer trigger:
-az functionapp restart \
+# Invoke the timer trigger immediately via the Kudu admin API.
+# Get the master key first (required for admin endpoint):
+MASTER_KEY=$(az functionapp keys list \
   --name func-condomanager-dev \
-  --resource-group rg-condomanager
+  --resource-group rg-condomanager \
+  --query "masterKey" -o tsv)
+
+curl -s -X POST \
+  "https://func-condomanager-dev.azurewebsites.net/admin/functions/gdrive_sync" \
+  -H "x-functions-key: $MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
+
+> **Note:** `az functionapp restart` recycles the host process but does NOT invoke
+> the function — the timer fires only on its next scheduled occurrence (every 30 min).
+> The admin API `POST /admin/functions/<name>` triggers an immediate run on any plan.
 
 **Verify:** Wait ~2 minutes, then check the `knowledge_sync` container in Cosmos
 Data Explorer or via CLI:
@@ -532,11 +552,13 @@ print("Guardrail event emitted.")
 ### 10.2 Verify the alert fired
 
 ```bash
-# Check alert history (may take up to 5 minutes to evaluate):
-az monitor metrics alert show \
+# Check alert history (may take up to 5 minutes to evaluate).
+# NOTE: this is a scheduledQueryRules resource, not a metrics alert — use
+# 'az monitor scheduled-query show', NOT 'az monitor metrics alert show'.
+az monitor scheduled-query show \
   --name "alert-guardrail-trip-dev" \
   --resource-group rg-condomanager \
-  --query "properties.lastFiredTime" -o tsv
+  --query "lastModifiedDate" -o tsv
 ```
 
 **Expected:** a timestamp within the last 10 minutes.
