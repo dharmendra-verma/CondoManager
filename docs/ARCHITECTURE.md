@@ -27,6 +27,7 @@ metrics.
 ## 2. The 10,000-foot view
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"lineColor": "#333333", "edgeLabelBackground": "#ffffff", "fontSize": "14px"}, "flowchart": {"curve": "basis", "nodeSpacing": 50, "rankSpacing": 60}}}%%
 flowchart TB
     WA[WhatsApp] --> NORM[Channel adapters]
     TG[Telegram] --> NORM
@@ -57,6 +58,8 @@ flowchart TB
     MAINT -.->|traces| OBS
     KNOW -.->|traces| OBS
     ESC -.->|traces| OBS
+
+    linkStyle default stroke:#333333,stroke-width:2px
 ```
 
 Each box is a doc:
@@ -77,6 +80,7 @@ This is the single most useful thing to internalize. A tenant texts *"my kitchen
 sink is leaking"*:
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"labelBoxBkgColor": "#ffffff", "labelBoxBorderColor": "#333333", "labelTextColor": "#333333", "activationBorderColor": "#333333", "activationBkgColor": "#f0f0f0", "sequenceNumberColor": "#333333"}}}%%
 sequenceDiagram
     participant T as Tenant
     participant CH as Channel adapter
