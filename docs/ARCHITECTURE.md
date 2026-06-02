@@ -28,16 +28,23 @@ metrics.
 
 ```mermaid
 flowchart TB
-    subgraph Channels["Channel layer (CM-29)"]
-        WA[WhatsApp] & TG[Telegram] & EM[Email] & WEB[Web form]
+    subgraph Channels["Channel layer"]
+        WA[WhatsApp]
+        TG[Telegram]
+        EM[Email]
+        WEB[Web form]
     end
-    Channels -->|NormalizedMessage| ORCH
 
-    subgraph ORCH["LangGraph orchestrator (CM-28)"]
-        TRIAGE[Triage CM-30] --> MAINT[Maintenance CM-31]
-        TRIAGE --> KNOW[Knowledge CM-33]
-        TRIAGE --> ESC[Escalation CM-32]
-        MAINT --> VEND[Vendor CM-35]
+    WA -->|NormalizedMessage| ORCH
+    TG -->|NormalizedMessage| ORCH
+    EM -->|NormalizedMessage| ORCH
+    WEB -->|NormalizedMessage| ORCH
+
+    subgraph ORCH["LangGraph orchestrator"]
+        TRIAGE[Triage] --> MAINT[Maintenance]
+        TRIAGE --> KNOW[Knowledge]
+        TRIAGE --> ESC[Escalation]
+        MAINT --> VEND[Vendor]
         VEND --> HITL[HITL review]
         ESC --> HITL
     end
@@ -47,14 +54,14 @@ flowchart TB
     ESC -->|escalations| COSMOS
     HITL -->|ratings| COSMOS
 
-    subgraph JOBS["Background jobs (Azure Functions)"]
-        GD[gdrive-sync CM-34] -->|policy vectors| COSMOS
-        AN[analytics-digest CM-36] -->|weekly digest| SLACK[Slack]
+    subgraph JOBS["Background jobs"]
+        GD[gdrive-sync] -->|policy vectors| COSMOS
+        AN[analytics-digest] -->|weekly digest| SLACK[Slack]
     end
 
-    COSMOS --> PORTAL[Tenant status portal CM-37]
+    COSMOS --> PORTAL[Tenant portal]
 
-    ORCH -.traces/logs/metrics.-> OBS[(Observability:<br/>App Insights · LangSmith · Langfuse)]
+    ORCH -.->|traces / logs / metrics| OBS[(App Insights\nLangSmith\nLangfuse)]
 ```
 
 Each box is a doc:
