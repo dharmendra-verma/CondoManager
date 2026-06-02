@@ -53,7 +53,7 @@ flowchart TB
 
     COSMOS --> PORTAL[Tenant portal]
 
-    TRIAGE -.->|traces| OBS[App Insights / LangSmith / Langfuse]
+    TRIAGE -.->|traces| OBS[Observability]
     MAINT -.->|traces| OBS
     KNOW -.->|traces| OBS
     ESC -.->|traces| OBS
@@ -94,16 +94,16 @@ sequenceDiagram
     Note over GR: every step emits a span and log keyed by request_id
     GR->>TR: triage node
     TR->>TR: classify intent as maintenance
-    TR->>OB: emit metric.triage.route
+    TR->>OB: emit triage route metric
     GR->>MA: route to maintenance node
     MA->>DB: dedup check then write ticket
     MA->>VE: route to vendor node
     VE->>VE: match contractor and decide dispatch
     alt auto-dispatch allowed
-        VE->>OB: emit metric.vendor.auto_dispatch
+        VE->>OB: emit vendor dispatch metric
         VE-->>T: confirmation and ETA
     else needs approval
-        VE->>HU: pause at hitl_review
+        VE->>HU: pause at hitl review
         HU->>VE: approve with optional rating
         VE-->>T: confirmation and ETA
     end
