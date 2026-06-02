@@ -55,10 +55,14 @@ still emits the decision so approval rate is always measurable.
 ## 4. Dashboards
 
 - **Log Analytics** — the CM-25 workbook (`infra/bicep/modules/workbook-payload.json`)
-  carries cost / latency / per-node error / HITL-queue panels. A **PRD-metrics**
-  panel group over the new `metric.*` `customEvents` is a follow-up sub-task.
+  carries cost / latency / per-node error / HITL-queue panels, **plus a
+  PRD-metrics panel group** (✅ added in **CM-45**) that queries the `metric.*`
+  `customEvents`: triage routing, knowledge self-service, vendor auto-dispatch,
+  escalation legal-flag, and HITL approval.
 - **Langfuse** — `@observe_node` is wired (CM-24); the per-agent cost/quality/
-  latency dashboards are built in the Langfuse UI (see `docs/INFRA.md`).
+  latency dashboards are built in the Langfuse UI (✅ CM-45; see `docs/INFRA.md`).
+- See [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) §"PRD success metrics" for the
+  emitter contract and the metric-name catalogue.
 
 ## 5. Follow-up sub-tasks (scope split per the CM-39 plan)
 
@@ -73,9 +77,9 @@ than as a sprawling under-tested change:
 - **HITL ratings persistence** — ✅ done (CM-44): `hitl_review` records manager
   decisions + optional rating/comment to the `escalations` store and emits
   `metric.hitl.rating`.
-- **Dashboards** — add the PRD-metrics workbook panel group + the Langfuse
-  dashboards; generalize `seed-langsmith-dataset.py` to all 5 datasets.
-  *(Separate sub-task — NOT in CM-46.)*
+- **Dashboards** — ✅ done (CM-45): PRD-metrics workbook panel group + the
+  Langfuse/LangSmith dashboards. Generalizing `seed-langsmith-dataset.py` to all
+  5 datasets remains.
 - **Outcome metrics baselines** — ✅ done (CM-46): `Ticket.resolved_at` + the
   `TicketRepository.resolve()` seam + `agents.maintenance.resolve_ticket()`
   capture the lifecycle and emit `metric.ttm_resolution_ms`; a fresh ticket

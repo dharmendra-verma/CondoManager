@@ -57,24 +57,30 @@ knowledge maintenance escalation guardrail_terminated
 
 ## 2. `AgentState` reference
 
-Pydantic `BaseModel` defined in `agents/orchestrator/state.py`. **13 fields**,
-exactly per the CM-28 AC.
+Pydantic `BaseModel` defined in `agents/orchestrator/state.py`. **14 fields**
+(the CM-28 spine fields plus `escalation`, added by CM-32).
 
-| Field          | Type                | Default          | Notes                                |
-|----------------|---------------------|------------------|--------------------------------------|
-| `tenant_id`    | `str`               | _required_       | Per-tenant scoping for all telemetry. |
-| `request_id`   | `str`               | _required_       | Correlates with CM-21 `request_id` ContextVar. |
-| `channel`      | `Channel`           | `UNKNOWN`        | `whatsapp` / `telegram` / `email` / `web` / `unknown`. |
-| `raw_message`  | `str`               | `""`             | Inbound tenant message — set at the entry adapter. |
-| `normalized`   | `dict`              | `{}`             | Channel-normalized payload (CM-29). |
-| `intent`       | `Intent \| None`    | `None`           | `maintenance` / `inquiry` / `escalation` / `follow-up` / `unknown`. |
-| `urgency`      | `Urgency \| None`   | `None`           | `emergency` / `high` / `medium` / `low`. |
-| `tone`         | `Tone \| None`      | `None`           | `neutral` / `frustrated` / `angry` / `urgent`. |
-| `history`      | `list[dict]`        | `[]`             | Conversation history (CM-32 escalation context). |
-| `cost_so_far`  | `float`             | `0.0`            | USD. Compared to `COST_CAP_USD` (5.0). |
-| `search_count` | `int`               | `0`              | Compared to `LOOP_CAP` (50). |
-| `routes`       | `list[str]`         | `[]`             | Router queue; last element is the next node. |
-| `output`       | `dict \| None`      | `None`           | Final reply / ticket payload set by terminal nodes. |
+> **New here? Read this as a form that travels with one tenant message.** Each
+> node fills in a few fields and passes the whole form to the next node. Nothing
+> is mutated in place — LangGraph copies the form forward with the node's
+> updates. `routes[-1]` is "which node runs next".
+
+| Field          | Type                       | Default          | Notes                                |
+|----------------|----------------------------|------------------|--------------------------------------|
+| `tenant_id`    | `str`                      | _required_       | Per-tenant scoping for all telemetry. |
+| `request_id`   | `str`                      | _required_       | Correlates with CM-21 `request_id` ContextVar. |
+| `channel`      | `Channel`                  | `UNKNOWN`        | `whatsapp` / `telegram` / `email` / `web` / `unknown`. |
+| `raw_message`  | `str`                      | `""`             | Inbound tenant message — set at the entry adapter. |
+| `normalized`   | `NormalizedMessage \| None`| `None`           | Channel-normalized payload (CM-29); see [`docs/CHANNELS.md`](CHANNELS.md). |
+| `intent`       | `Intent \| None`           | `None`           | `maintenance` / `inquiry` / `escalation` / `follow-up` / `unknown`. |
+| `urgency`      | `Urgency \| None`          | `None`           | `emergency` / `high` / `medium` / `low`. |
+| `tone`         | `Tone \| None`             | `None`           | `neutral` / `frustrated` / `angry` / `urgent`. |
+| `history`      | `list[dict]`               | `[]`             | Conversation history (CM-32 escalation context). |
+| `cost_so_far`  | `float`                    | `0.0`            | USD. Compared to `COST_CAP_USD` (5.0). |
+| `search_count` | `int`                      | `0`              | Compared to `LOOP_CAP` (50). |
+| `routes`       | `list[str]`                | `[]`             | Router queue; last element is the next node. |
+| `output`       | `dict \| None`             | `None`           | Final reply / ticket payload set by terminal nodes. |
+| `escalation`   | `EscalationRecord \| None` | `None`           | CM-32 escalation record; survives `hitl_review` (which overwrites `output`). |
 
 ### `merge(updates: dict) -> AgentState`
 
@@ -335,7 +341,11 @@ CM-34's `agents.knowledge` write-side primitives (`chunk_text`,
    **Reciprocal Rank Fusion** into the top-k `RetrievedChunk`s.
 2. **Answer** (`rag.answer_question`) — a strict "use ONLY the numbered context
    passages" prompt yields a `KnowledgeAnswer` with inline `[n]` citations.
-   Confidence = the top chunk's cosine similarity (`1 - VectorDistance`).
+   Confidence = the top chunk's cosine similarity, used **directly** from
+   `VectorDistance()` (`1.0` = identical), clamped to `[0, 1]`. **(CM-47:** the
+   earlier `1 - VectorDistance` arithmetic *inverted* the score — a perfect match
+   scored `0` and got refused — and was removed. `VectorDistance` already returns
+   a cosine *similarity*, not a distance. See [`docs/INFRA.md`](INFRA.md) §Cosmos.**)**
 3. **Refuse + hand off** — if confidence `< CONFIDENCE_THRESHOLD` (0.6) or
    nothing grounds the answer, the node sets `refused=True` and appends
    `"maintenance"` to `state.routes`; `graph._knowledge_router` then hands the

@@ -374,13 +374,14 @@ Higher = more similar. Consequences for every query against `policies-vector`:
 - A `WHERE VectorDistance(...) > <threshold>` filter keeps the *most* similar
   rows for cosine (high score = close), the opposite of a distance threshold.
 
-> ⚠️ **Known bug ([CM-47]):** the CM-33 Knowledge Agent retrieval path
-> (`agents/knowledge/retrieval.py`) currently converts this score with
-> `similarity = 1 − VectorDistance`, which **inverts** it (a perfect match scores
-> `0` and gets refused). The `ORDER BY` is fine; only the similarity arithmetic is
-> wrong. Tracked + fixed under CM-47 (its test fakes encode the same inversion, so
-> CI is green). CM-42 documents the semantics and fixes the smoke test; the
-> production retrieval fix is CM-47.
+> ✅ **Fixed in [CM-47].** The CM-33 Knowledge Agent retrieval path
+> (`agents/knowledge/retrieval.py`) once converted this score with
+> `similarity = 1 − VectorDistance`, which **inverted** it (a perfect match scored
+> `0` and got refused). CM-47 removed that arithmetic: retrieval now uses the raw
+> `VectorDistance` cosine score directly, clamped to `[0, 1]` (`retrieval.py:108-113`).
+> CM-42 documented the semantics + fixed the CM-17 smoke test; CM-47 fixed the
+> production retrieval path. The Knowledge Agent confidence in
+> [`docs/AGENTS.md`](AGENTS.md) §9 reflects this.
 
 CM-42 ruled out the other hypotheses: the `1.0` is deterministic (not DiskANN
 index lag — no wait/retry needed), and `float32` narrowing/zero-norm don't apply
