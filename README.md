@@ -1,9 +1,23 @@
 # CondoManager
 
-Multi-agent platform for condominium maintenance & inquiry management.
-Tenants reach the platform over WhatsApp / Telegram / email; a LangGraph
-orchestrator routes each request to a specialist agent (Triage → Maintenance /
-Knowledge / Escalation / Vendor / Analytics).
+Multi-agent platform for condominium maintenance & inquiry management. Tenants
+reach the platform over **WhatsApp / Telegram / email / web**; a **LangGraph
+orchestrator** classifies each message and routes it to a specialist agent:
+
+| Agent | What it does |
+|---|---|
+| **Triage** | Classifies intent, urgency, and tone; routes to the right agent |
+| **Maintenance** | Creates & deduplicates maintenance tickets; assigns priority + ETA |
+| **Vendor** | Matches contractors and auto-dispatches or escalates for approval |
+| **Knowledge** | Answers policy questions via vector RAG over Google Drive docs |
+| **Escalation** | Handles sensitive cases with a legal-risk gate and HITL approval |
+| **Analytics** | Produces weekly manager digests with trends and predictions |
+
+Built on **Azure** (Cosmos DB with DiskANN vector search, Container Apps, Azure
+Functions, Static Web Apps) with full **OpenTelemetry** observability (App
+Insights, LangSmith, Langfuse) and a **TypeScript** tenant status portal.
+PII masking, field-level access control, an append-only audit trail, and a
+right-to-erasure routine back the SOC2 compliance posture.
 
 Phased delivery is tracked in Jira project **CM**
 ([projecttracking.atlassian.net](https://projecttracking.atlassian.net/browse/CM-1)).
