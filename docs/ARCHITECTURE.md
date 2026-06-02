@@ -28,40 +28,35 @@ metrics.
 
 ```mermaid
 flowchart TB
-    subgraph Channels["Channel layer"]
-        WA[WhatsApp]
-        TG[Telegram]
-        EM[Email]
-        WEB[Web form]
-    end
+    WA[WhatsApp] --> NORM[Channel adapters]
+    TG[Telegram] --> NORM
+    EM[Email] --> NORM
+    WEB[Web form] --> NORM
 
-    WA -->|NormalizedMessage| ORCH
-    TG -->|NormalizedMessage| ORCH
-    EM -->|NormalizedMessage| ORCH
-    WEB -->|NormalizedMessage| ORCH
+    NORM -->|NormalizedMessage| TRIAGE[Triage agent]
 
-    subgraph ORCH["LangGraph orchestrator"]
-        TRIAGE[Triage] --> MAINT[Maintenance]
-        TRIAGE --> KNOW[Knowledge]
-        TRIAGE --> ESC[Escalation]
-        MAINT --> VEND[Vendor]
-        VEND --> HITL[HITL review]
-        ESC --> HITL
-    end
+    TRIAGE --> MAINT[Maintenance agent]
+    TRIAGE --> KNOW[Knowledge agent]
+    TRIAGE --> ESC[Escalation agent]
 
-    KNOW <-->|vector RAG| COSMOS[(Cosmos DB)]
-    MAINT -->|tickets| COSMOS
-    ESC -->|escalations| COSMOS
-    HITL -->|ratings| COSMOS
+    MAINT --> VEND[Vendor agent]
+    VEND --> HITL[HITL review]
+    ESC --> HITL
 
-    subgraph JOBS["Background jobs"]
-        GD[gdrive-sync] -->|policy vectors| COSMOS
-        AN[analytics-digest] -->|weekly digest| SLACK[Slack]
-    end
+    KNOW -->|RAG| COSMOS[(Cosmos DB)]
+    MAINT -->|ticket| COSMOS
+    ESC -->|escalation| COSMOS
+    HITL -->|rating| COSMOS
+
+    GD[gdrive-sync] -->|policy vectors| COSMOS
+    AN[analytics-digest] -->|digest| SLACK[Slack]
 
     COSMOS --> PORTAL[Tenant portal]
 
-    ORCH -.->|traces / logs / metrics| OBS[(App Insights\nLangSmith\nLangfuse)]
+    TRIAGE -.->|traces| OBS[App Insights / LangSmith / Langfuse]
+    MAINT -.->|traces| OBS
+    KNOW -.->|traces| OBS
+    ESC -.->|traces| OBS
 ```
 
 Each box is a doc:
@@ -84,33 +79,33 @@ sink is leaking"*:
 ```mermaid
 sequenceDiagram
     participant T as Tenant
-    participant CH as Channel adapter (CM-29)
-    participant GR as LangGraph spine (CM-28)
-    participant TR as Triage (CM-30)
-    participant MA as Maintenance (CM-31)
-    participant VE as Vendor (CM-35)
-    participant HU as Manager (HITL)
+    participant CH as Channel adapter
+    participant GR as LangGraph spine
+    participant TR as Triage agent
+    participant MA as Maintenance agent
+    participant VE as Vendor agent
+    participant HU as Manager HITL
     participant DB as Cosmos DB
     participant OB as Observability
 
-    T->>CH: "my kitchen sink is leaking" (+ photo)
-    CH->>CH: mask PII, normalize → NormalizedMessage
-    CH->>GR: AgentState(request_id=req_…, normalized=…)
-    Note over GR,OB: every step below emits a span + log line keyed by request_id
+    T->>CH: my kitchen sink is leaking
+    CH->>CH: mask PII and normalize to NormalizedMessage
+    CH->>GR: AgentState with request_id and normalized message
+    Note over GR: every step emits a span and log keyed by request_id
     GR->>TR: triage node
-    TR->>TR: classify intent=maintenance, urgency, tone
-    TR->>OB: emit_metric(metric.triage.route)
-    GR->>MA: route → maintenance node
-    MA->>DB: dedup check, then write Ticket (TKT-…)
-    MA->>VE: route → vendor node
-    VE->>VE: match contractor + dispatch decision
+    TR->>TR: classify intent as maintenance
+    TR->>OB: emit metric.triage.route
+    GR->>MA: route to maintenance node
+    MA->>DB: dedup check then write ticket
+    MA->>VE: route to vendor node
+    VE->>VE: match contractor and decide dispatch
     alt auto-dispatch allowed
         VE->>OB: emit metric.vendor.auto_dispatch
-        VE-->>T: confirmation + ETA
+        VE-->>T: confirmation and ETA
     else needs approval
-        VE->>HU: pause at hitl_review (interrupt)
-        HU->>VE: approve (+ optional rating → metric.hitl.rating)
-        VE-->>T: confirmation + ETA
+        VE->>HU: pause at hitl_review
+        HU->>VE: approve with optional rating
+        VE-->>T: confirmation and ETA
     end
 ```
 

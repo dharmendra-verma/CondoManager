@@ -45,24 +45,24 @@ query are deliberately thin so the testable surface is the important part.
 ```mermaid
 sequenceDiagram
     participant T as Tenant browser
-    participant S as SPA (ticket.ts)
-    participant F as Function (index.ts)
-    participant C as cosmos.ts
-    participant DB as Cosmos `tickets`
-    participant P as shape.ts (toPublicTicket)
+    participant S as SPA
+    participant F as Function
+    participant C as Cosmos client
+    participant DB as Cosmos tickets
+    participant P as Shape projector
 
     T->>S: enter code TKT-XXXXXXXX
     S->>F: GET /api/ticket?code=TKT-XXXXXXXX
-    F->>F: validate /^TKT-[0-9A-F]{8}$/  (else 400 invalid_code)
-    F->>C: lookupTicketByCode(code)
-    C->>DB: SELECT * FROM c WHERE c.id=@code  (cross-partition)
-    DB-->>C: raw ticket doc (or none)
-    C-->>F: raw doc | null
-    F->>P: toPublicTicket(doc)
-    Note over P: WHITELIST — copies only id, status, eta, vendor,<br/>created_at, updated_at. Drops issue_text, unit,<br/>tenant_id, request_id, category, duplicate_of, history.
-    P-->>F: PublicTicket | null
-    F-->>S: 200 PublicTicket | 404 not_found | 502 lookup_failed
-    S->>T: render status timeline + ETA + vendor
+    F->>F: validate code format, else 400
+    F->>C: lookupTicketByCode
+    C->>DB: query by id, cross-partition
+    DB-->>C: raw doc or none
+    C-->>F: raw doc or null
+    F->>P: toPublicTicket
+    Note over P: WHITELIST only safe fields. Drops issue_text, unit, tenant_id etc.
+    P-->>F: PublicTicket or null
+    F-->>S: 200 PublicTicket or 404 or 502
+    S->>T: render status timeline and ETA
 ```
 
 ### HTTP contract (`index.ts`)
