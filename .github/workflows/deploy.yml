@@ -1,22 +1,28 @@
 # Deploy pipeline — CM-19
 #
 # Per-env Azure deploys into the shared `rg-condomanager` resource group.
-# Single-RG topology: dev and prod resources live side-by-side, distinguished
-# by the `env` parameter and the per-env resource name suffix.
+# Single-RG topology: prod resources are distinguished by the `env` parameter
+# and the per-env resource name suffix.
 #
-# Env mapping (intentional deviation from the AC text — see docs/CICD.md):
-#   push to main                  →  deploy-dev   (env=dev,  no approver)
-#   GitHub Release published      →  deploy-prod  (env=prod, manual approval)
-#   workflow_dispatch             →  either env, on demand
+# Env mapping (dev DISABLED — prod-only while we conserve quota / avoid
+# deployment churn; see docs/CICD.md):
+#   push to main                  →  deploy-prod  (env=prod, auto — no approval)
+#   GitHub Release published      →  deploy-prod  (env=prod, auto — no approval)
+#   workflow_dispatch             →  prod only, on demand
 #
-# The AC mentions a `staging` deploy on tag, but CLAUDE.md §3 decided the
-# project has only dev and prod. No staging job, no tag-triggered deploy.
+# The `dev` jobs were removed intentionally. The `prod` GitHub Environment has
+# NO required reviewers (see infra/scripts/setup-github-environments.sh), so a
+# push to main deploys to prod immediately with no approval prompt. To restore
+# an approval gate, add the repo owner back to the prod `reviewers` array in
+# that script and re-run it. To re-enable dev, restore the `deploy-dev` /
+# `deploy-portal-dev` jobs from git history and add `dev` back to the
+# workflow_dispatch options.
 #
 # OIDC subject scoping uses the existing federated credentials from CM-15:
-#   - `repo:.../...:environment:dev`  → matched by jobs running in env `dev`
 #   - `repo:.../...:environment:prod` → matched by jobs running in env `prod`
-# Tighter than ref-based subjects: a job in env `prod` cannot run unless
-# GitHub has gated it through the prod approver list.
+#   - `repo:.../...:ref:refs/heads/main` → covers push-to-main prod deploys
+# The approval gate is purely a GitHub Environment protection rule, independent
+# of OIDC; removing the reviewer does not change how the job authenticates.
 #
 # Concurrency: per-ref, do NOT cancel an in-flight deploy. A second push to
 # main waits for the first deploy to finish rather than leaving `rg-condomanager`
@@ -38,7 +44,7 @@ on:
         description: 'Manual deploy target'
         required: true
         type: choice
-        options: [ dev, prod ]
+        options: [ prod ]
 
 permissions:
   id-token: write
@@ -49,98 +55,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy-dev:
-    name: Deploy → dev
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'dev')
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: az deployment group create (env=dev)
-        run: |
-          az deployment group create \
-            --resource-group rg-condomanager \
-            --name cm-rg-dev-${{ github.run_number }} \
-            --template-file infra/bicep/main.bicep \
-            --parameters infra/bicep/main.parameters.json \
-            --parameters env=dev
-
-      - name: Write step summary
-        run: |
-          {
-            echo "### Deploy to dev — success"
-            echo ""
-            echo "* Resource group: \`rg-condomanager\`"
-            echo "* Deployment name: \`cm-rg-dev-${{ github.run_number }}\`"
-            echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-  deploy-portal-dev:
-    name: Deploy portal → dev (SWA)
-    # CM-37: gated on a repo variable so `main` stays green until the operator
-    # provisions the Static Web App and sets PORTAL_DEPLOY_ENABLED=true.
-    # The SWA deployment token is fetched JUST-IN-TIME via OIDC az login
-    # (`az staticwebapp secrets list`) — no long-lived token secret is stored
-    # in the repo, keeping the CM-15 OIDC-only posture.
-    if: >-
-      vars.PORTAL_DEPLOY_ENABLED == 'true'
-      && (
-        (github.event_name == 'push' && github.ref == 'refs/heads/main')
-        || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'dev')
-      )
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Fetch SWA deployment token (via OIDC, not a stored secret)
-        id: swatoken
-        run: |
-          token=$(az staticwebapp secrets list \
-            --name swa-condomanager-dev \
-            --query "properties.apiKey" -o tsv)
-          echo "::add-mask::$token"
-          echo "token=$token" >> "$GITHUB_OUTPUT"
-
-      - name: Deploy to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
-        with:
-          azure_static_web_apps_api_token: ${{ steps.swatoken.outputs.token }}
-          action: upload
-          app_location: portal
-          api_location: portal/api
-          output_location: dist
-
-      - name: Write step summary
-        run: |
-          {
-            echo "### Deploy portal to dev — success"
-            echo ""
-            echo "* Static Web App: \`swa-condomanager-dev\`"
-            echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
-          } >> "$GITHUB_STEP_SUMMARY"
-
   deploy-prod:
     name: Deploy → prod
     if: >-
-      github.event_name == 'release'
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'release'
       || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'prod')
     runs-on: ubuntu-latest
     environment: prod
@@ -172,3 +91,51 @@ jobs:
             echo "* Deployment name: \`cm-rg-prod-${{ github.run_number }}\`"
             echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy-portal-prod:
+    name: Deploy portal → prod (SWA)
+    # CM-37: gated on a repo variable so `main` stays green until the operator
+    # provisions the Static Web App and sets PORTAL_DEPLOY_ENABLED=true.
+    # The SWA deployment token is fetched JUST-IN-TIME via OIDC az login
+    # (`az staticwebapp secrets list`) — no long-lived token secret is stored
+    # in the repo, keeping the CM-15 OIDC-only posture.
+    if: >-
+      vars.PORTAL_DEPLOY_ENABLED == 'true'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'release'
+        || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'prod')
+      )
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch SWA deployment token (via OIDC, not a stored secret)
+        id: swatoken
+        run: |
+          token=$(az staticwebapp secrets list \
+            --name swa-condomanager-prod \
+            --query "properties.apiKey" -o tsv)
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.swatoken.outputs.token }}
+          action: upload
+          app_location: portal
+          api_location: portal/api
+          output_location: dist
+
+      - name: Write step summary
+        run: |
+   
