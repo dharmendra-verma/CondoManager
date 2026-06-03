@@ -107,13 +107,13 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: az deployment group what-if (env=dev)
+      - name: az deployment group what-if (env=prod)
         run: |
           az deployment group what-if \
             --resource-group rg-condomanager \
             --template-file infra/bicep/main.bicep \
             --parameters infra/bicep/main.parameters.json \
-            --parameters env=dev
+            --parameters env=prod
 
   lint-python:
     name: Python · ruff + mypy

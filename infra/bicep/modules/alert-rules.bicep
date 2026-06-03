@@ -148,7 +148,11 @@ resource hallucinationSpike 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
     criteria: {
       allOf: [
         {
-          query: '''
+          // NOTE: Bicep does NOT interpolate ${...} inside ''' multi-line
+          // strings — they are verbatim. A literal `${hallucinationSpikeMinCalls}`
+          // shipped to Azure makes KQL fail with "Query could not be parsed at
+          // '{'". Use format() with a {0} placeholder to splice the threshold in.
+          query: format('''
             let win = 1h;
             let llm = dependencies
               | where timestamp > ago(win)
@@ -163,8 +167,8 @@ resource hallucinationSpike 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
               total = total,
               refused = refused,
               refusal_pct = iff(total == 0, 100.0, todouble(refused) / total * 100)
-            | where total > ${hallucinationSpikeMinCalls} and refusal_pct < 1.0
-          '''
+            | where total > {0} and refusal_pct < 1.0
+          ''', hallucinationSpikeMinCalls)
           timeAggregation: 'Count'
           operator: 'GreaterThan'
           threshold: 0
