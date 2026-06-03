@@ -36,3 +36,7 @@ build/
 #claude setting
 .claude/settings.local.json
 .claude/*.lock
+.claude/worktrees/
+
+# Local patch exports (already applied as commits)
+patches/
