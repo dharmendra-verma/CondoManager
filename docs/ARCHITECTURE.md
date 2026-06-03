@@ -28,12 +28,12 @@ metrics.
 
 ```mermaid
 flowchart TB
-    subgraph Channels["Channel layer (CM-29)"]
+    subgraph Channels["Channel layer (CM-29) [Azure Container Apps]"]
         WA[WhatsApp] & TG[Telegram] & EM[Email] & WEB[Web form]
     end
     Channels -->|NormalizedMessage| ORCH
 
-    subgraph ORCH["LangGraph orchestrator (CM-28)"]
+    subgraph ORCH["LangGraph orchestrator (CM-28) [Azure Container Apps]"]
         TRIAGE[Triage CM-30] --> MAINT[Maintenance CM-31]
         TRIAGE --> KNOW[Knowledge CM-33]
         TRIAGE --> ESC[Escalation CM-32]
@@ -42,22 +42,41 @@ flowchart TB
         ESC --> HITL
     end
 
-    KNOW <-->|vector RAG| COSMOS[(Cosmos DB)]
+    KNOW <-->|vector RAG| COSMOS[(Azure Cosmos DB<br/>cosmos-condomanager-*)]
     MAINT -->|tickets| COSMOS
     ESC -->|escalations| COSMOS
     HITL -->|ratings| COSMOS
 
-    subgraph JOBS["Background jobs (Azure Functions)"]
+    subgraph JOBS["Background jobs [Azure Functions: func-condomanager-*]"]
         GD[gdrive-sync CM-34] -->|policy vectors| COSMOS
-        AN[analytics-digest CM-36] -->|weekly digest| SLACK[Slack]
+        AN[analytics-digest CM-36] -->|weekly digest| SLACK[Slack<br/>external SaaS]
     end
 
-    COSMOS --> PORTAL[Tenant status portal CM-37]
+    COSMOS --> PORTAL[Tenant status portal CM-37<br/>Azure Static Web App]
 
-    ORCH -.traces/logs/metrics.-> OBS[(Observability:<br/>App Insights · LangSmith · Langfuse)]
+    ORCH -.traces/logs/metrics.-> OBS[(App Insights + Azure Monitor<br/>appi-/law-condomanager-*<br/>+ LangSmith/Langfuse SaaS)]
 ```
 
-Each box is a doc:
+**Where each box runs (Azure).** Every box above maps to a concrete Azure
+resource in the shared `rg-condomanager` resource group. Names use the `<env>`
+suffix (`dev` or `prod`); per-env resources sit side-by-side in the one RG.
+
+| Box in the diagram | Azure resource (where it's deployed) | Resource name | Bicep module |
+|---|---|---|---|
+| Channel adapters (WhatsApp / Telegram / Email / Web ingest) | Azure Container Apps — inbound HTTP on the agent app | `ca-...-condomanager-<env>` | `container-app.bicep` |
+| LangGraph orchestrator + all agents | Azure Container Apps — same container app | `ca-...-condomanager-<env>` | `container-app.bicep` |
+| Orchestrator networking | VNet + delegated subnet, Container Apps environment | `vnet-condomanager-<env>`, `cae-condomanager-<env>` | `vnet.bicep`, `container-apps-env.bicep` |
+| Orchestrator container image | Azure Container Registry (Basic SKU) | `acrcondomanager<env>` | `acr.bicep` |
+| Background jobs (gdrive-sync, analytics-digest) | Azure Functions (Consumption / Y1) | `func-condomanager-<env>` | `functions.bicep` |
+| Tenant status portal | Azure Static Web App (Free) + managed Functions API | `swa-condomanager-<env>` | `static-web-app.bicep` |
+| Cosmos boxes (tickets, escalations, policies-vector, digests, ...) | Azure Cosmos DB (NoSQL + vector search) | `cosmos-condomanager-<env>` | `cosmos.bicep` |
+| Secrets (read via Managed Identity) | Azure Key Vault (RBAC) + User-Assigned MI | `kv-condomanager-<env>`, `id-condomanager-<env>` | `keyvault.bicep`, `managed-identity.bicep` |
+| Observability sink (traces / logs / metrics) | Application Insights + Log Analytics + Azure Monitor | `appi-condomanager-<env>`, `law-condomanager-<env>` | `app-insights.bicep`, `log-analytics.bicep` |
+| Dashboards / alerts | Azure Monitor workbook + alert rules + action group | (in `rg-condomanager`) | `workbook.bicep`, `alert-rules.bicep`, `action-group.bicep` |
+| LangSmith (dev) / Langfuse (prod) | External SaaS — not deployed in Azure | n/a | n/a |
+| Slack notifications | External SaaS — not deployed in Azure | n/a | n/a |
+
+Each box is also a doc:
 
 | Area | What it does | Deep dive |
 |---|---|---|
@@ -170,12 +189,14 @@ access, and a retention/right-to-erasure routine backs the SOC2 posture — see
    GitHub Actions (OIDC, no stored creds) ── CICD.md
       │  build + deploy
       ▼
-   Azure: rg-condomanager (one RG, dev + prod by tag) ── INFRA.md
-      ├── Container Apps          ← the agents/orchestrator
-      ├── Azure Functions         ← gdrive-sync + analytics-digest
-      ├── Static Web App          ← tenant portal
-      ├── Cosmos DB + Key Vault   ← data + secrets
-      └── App Insights + Monitor  ← traces, dashboards, alerts
+   Azure: rg-condomanager (one RG, dev + prod by tag) -- INFRA.md
+      |-- Container Apps    (ca-...-condomanager-<env>)  <- agents/orchestrator + channel adapters
+      |-- Container Registry(acrcondomanager<env>)       <- orchestrator image (Basic SKU)
+      |-- Azure Functions   (func-condomanager-<env>)    <- gdrive-sync + analytics-digest
+      |-- Static Web App    (swa-condomanager-<env>)     <- tenant portal (+ managed API)
+      |-- Cosmos DB         (cosmos-condomanager-<env>)  <- documents + vector search
+      |-- Key Vault + MI    (kv-/id-condomanager-<env>)  <- secrets, read via Managed Identity
+      `-- App Insights+Mon  (appi-/law-condomanager-<env>) <- traces, dashboards, alerts
 ```
 
 * **One resource group**, `dev` vs `prod` distinguished by resource name + tag.

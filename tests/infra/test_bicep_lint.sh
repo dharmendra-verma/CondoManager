@@ -172,21 +172,19 @@ else
   echo "   ✓ infra-deploy.yml removed"
 fi
 
-echo "▶  Verifying deploy.yml defines deploy-dev and deploy-prod jobs"
-if grep -Eq "^[[:space:]]+deploy-dev:" "$DEPLOY_WF" \
-   && grep -Eq "^[[:space:]]+deploy-prod:" "$DEPLOY_WF"; then
-  echo "   ✓ deploy-dev + deploy-prod jobs present"
+echo "▶  Verifying deploy.yml defines the deploy-prod job (dev disabled — prod-only)"
+if grep -Eq "^[[:space:]]+deploy-prod:" "$DEPLOY_WF"; then
+  echo "   ✓ deploy-prod job present"
 else
-  echo "   ✗ deploy.yml missing deploy-dev or deploy-prod job"
+  echo "   ✗ deploy.yml missing deploy-prod job"
   FAIL=1
 fi
 
-echo "▶  Verifying deploy.yml gates per-env deploys via GitHub Environments"
-if grep -Eq "environment:[[:space:]]+dev" "$DEPLOY_WF" \
-   && grep -Eq "environment:[[:space:]]+prod" "$DEPLOY_WF"; then
-  echo "   ✓ deploy-dev uses environment: dev, deploy-prod uses environment: prod"
+echo "▶  Verifying deploy.yml gates the prod deploy via a GitHub Environment"
+if grep -Eq "environment:[[:space:]]+prod" "$DEPLOY_WF"; then
+  echo "   ✓ deploy-prod uses environment: prod"
 else
-  echo "   ✗ deploy.yml does not gate per-env deploys with GitHub Environments"
+  echo "   ✗ deploy.yml does not gate the prod deploy with a GitHub Environment"
   FAIL=1
 fi
 
