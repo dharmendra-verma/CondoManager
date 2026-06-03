@@ -153,6 +153,111 @@ button:hover {
   border: 0;
 }
 
+/* ---- Tenant admin page (CM-56) ---- */
+.app.admin {
+  max-width: 60rem;
+}
+
+.warn {
+  color: #8a5a00;
+}
+
+.card {
+  margin-top: 1.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+}
+
+.card h2 {
+  font-size: 1.15rem;
+  margin: 0 0 1rem;
+}
+
+/* Admin free-text fields must not be force-uppercased like the ticket code. */
+.admin input,
+.admin textarea {
+  text-transform: none;
+  font-size: 1rem;
+  font-family: inherit;
+}
+
+.admin textarea {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  width: 100%;
+  resize: vertical;
+}
+
+.admin label {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-bottom: -0.4rem;
+}
+
+.req {
+  color: #b3261e;
+  margin-left: 0.15rem;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.form-actions button {
+  flex: 1;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table.tenants {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+table.tenants th,
+table.tenants td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+table.tenants th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+td.actions {
+  white-space: nowrap;
+}
+
+button.link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  padding: 0.25rem 0.4rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+  width: auto;
+}
+
+button.link.danger {
+  color: #b3261e;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #15151a;
@@ -160,5 +265,9 @@ button:hover {
     --muted: #9a9aa6;
     --card: #1f1f27;
     --border: #33333d;
+  }
+
+  .warn {
+    color: #e0b050;
   }
 }
