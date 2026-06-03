@@ -12,6 +12,12 @@
     "Referrer-Policy": "no-referrer"
   },
   "routes": [
-    { "route": "/api/ticket", "methods": ["GET"], "allowedRoles": ["anonymous"] }
+    { "route": "/api/ticket", "methods": ["GET"], "allowedRoles": ["anonymous"] },
+    { "route": "/admin", "rewrite": "/admin.html" },
+    {
+      "route": "/api/admin/*",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "allowedRoles": ["anonymous"]
+    }
   ]
 }

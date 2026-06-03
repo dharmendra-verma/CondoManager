@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex" />
+    <title>CondoManager — Tenant Admin</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="app admin">
+      <h1>Tenant admin</h1>
+      <!-- TODO(auth): this page is open / unauthenticated. The CRUD API it calls
+           is gated by the TENANT_ADMIN_ENABLED dev/test flag and is disabled in
+           staging/prod. Real auth (SWA roles / AAD) must land before deployment. -->
+      <p class="lede warn">
+        Internal admin tool — no login yet. Disabled outside dev/test.
+      </p>
+
+      <section class="card">
+        <h2 id="form-title">Add tenant</h2>
+        <form id="tenant-form" novalidate>
+          <label for="f-name">Name<span class="req">*</span></label>
+          <input id="f-name" name="name" type="text" autocomplete="off" required />
+
+          <label for="f-unit">Unit<span class="req">*</span></label>
+          <input id="f-unit" name="unit" type="text" autocomplete="off" required />
+
+          <label for="f-mobile">Mobile<span class="req">*</span></label>
+          <input id="f-mobile" name="mobile" type="tel" autocomplete="off" placeholder="+919876543210" required />
+
+          <label for="f-email">Email</label>
+          <input id="f-email" name="email" type="email" autocomplete="off" />
+
+          <label for="f-spouse">Spouse</label>
+          <input id="f-spouse" name="spouse" type="text" autocomplete="off" />
+
+          <label for="f-notes">Notes</label>
+          <textarea id="f-notes" name="notes" rows="2"></textarea>
+
+          <div class="form-actions">
+            <button id="submit-btn" type="submit">Add tenant</button>
+            <button id="cancel-btn" type="button" class="secondary" hidden>Cancel</button>
+          </div>
+          <p id="form-error" class="error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Tenants</h2>
+        <p id="empty" class="lede" hidden>No tenants yet. Add one above.</p>
+        <div class="table-wrap">
+          <table class="tenants">
+            <thead>
+              <tr>
+                <th scope="col">Unit</th>
+                <th scope="col">Name</th>
+                <th scope="col">Mobile</th>
+                <th scope="col">Email</th>
+                <th scope="col">Spouse</th>
+                <th scope="col">Notes</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tenants-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/admin-view.ts"></script>
+  </body>
+</html>
