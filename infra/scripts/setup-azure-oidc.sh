@@ -23,6 +23,23 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
+# Git Bash / MSYS2 path-conversion guard (Windows only).
+# When bash on Windows invokes az (really az.cmd, a native Windows program), the
+# MSYS runtime rewrites any argument that looks like a Unix absolute path — i.e.
+# anything with a leading '/' — into a Windows path. That turns
+#     --scope /subscriptions/<id>
+# into
+#     --scope C:/Program Files/Git/subscriptions/<id>
+# before az ever sees it, so ARM finds no subscription segment and every role
+# command fails with:  (MissingSubscription) The request did not have a
+# subscription ...  (`az group list` is unaffected — it takes no '/' argument).
+# Disabling conversion makes --scope reach az verbatim. These vars are inert in
+# Azure Cloud Shell / Linux, so the script stays portable.
+# -----------------------------------------------------------------------------
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL='*'
+
+# -----------------------------------------------------------------------------
 # Config — edit only if your repo is different
 # -----------------------------------------------------------------------------
 GH_OWNER="dharmendra-verma"
@@ -34,9 +51,9 @@ ROLE="Contributor"
 # 1. Detect subscription + tenant (no input needed)
 # -----------------------------------------------------------------------------
 echo "▶  Detecting active subscription..."
-SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
-TENANT_ID="$(az account show --query tenantId -o tsv)"
-SUB_NAME="$(az account show --query name -o tsv)"
+SUBSCRIPTION_ID="$(az account show --query id -o tsv | tr -d '\r')"
+TENANT_ID="$(az account show --query tenantId -o tsv | tr -d '\r')"
+SUB_NAME="$(az account show --query name -o tsv | tr -d '\r')"
 echo "   ✓ Subscription: $SUB_NAME ($SUBSCRIPTION_ID)"
 echo "   ✓ Tenant:       $TENANT_ID"
 
@@ -45,25 +62,28 @@ echo ""
 read -r -p "Continue with this subscription? [y/N] " ans
 [[ "$ans" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
 
+# Pin the active subscription so every ARM call below has explicit context.
+az account set --subscription "$SUBSCRIPTION_ID"
+
 # -----------------------------------------------------------------------------
 # 2. Create the Azure AD app + service principal (idempotent)
 # -----------------------------------------------------------------------------
 echo ""
 echo "▶  Creating Azure AD app '$SP_NAME' (idempotent)..."
-APP_ID="$(az ad app list --display-name "$SP_NAME" --query '[0].appId' -o tsv)"
+APP_ID="$(az ad app list --display-name "$SP_NAME" --query '[0].appId' -o tsv | tr -d '\r')"
 if [ -z "$APP_ID" ]; then
-  APP_ID="$(az ad app create --display-name "$SP_NAME" --query appId -o tsv)"
+  APP_ID="$(az ad app create --display-name "$SP_NAME" --query appId -o tsv | tr -d '\r')"
   echo "   ✓ Created app, appId: $APP_ID"
 else
   echo "   ✓ Reusing existing app, appId: $APP_ID"
 fi
 
-OBJECT_ID="$(az ad app show --id "$APP_ID" --query id -o tsv)"
+OBJECT_ID="$(az ad app show --id "$APP_ID" --query id -o tsv | tr -d '\r')"
 
 # Service principal in this tenant
-SP_OBJECT_ID="$(az ad sp list --filter "appId eq '$APP_ID'" --query '[0].id' -o tsv)"
+SP_OBJECT_ID="$(az ad sp list --filter "appId eq '$APP_ID'" --query '[0].id' -o tsv | tr -d '\r')"
 if [ -z "$SP_OBJECT_ID" ]; then
-  SP_OBJECT_ID="$(az ad sp create --id "$APP_ID" --query id -o tsv)"
+  SP_OBJECT_ID="$(az ad sp create --id "$APP_ID" --query id -o tsv | tr -d '\r')"
   echo "   ✓ Created service principal: $SP_OBJECT_ID"
 else
   echo "   ✓ Service principal already exists: $SP_OBJECT_ID"
@@ -74,14 +94,17 @@ fi
 # -----------------------------------------------------------------------------
 echo ""
 echo "▶  Assigning $ROLE role at subscription scope..."
-if az role assignment list \
+EXISTING_CONTRIBUTOR="$(az role assignment list \
      --assignee "$APP_ID" \
      --scope "/subscriptions/$SUBSCRIPTION_ID" \
-     --role "$ROLE" --query '[0].id' -o tsv | grep -q .; then
+     --role "$ROLE" \
+     --query '[0].id' -o tsv 2>/dev/null || true)"
+if [ -n "$EXISTING_CONTRIBUTOR" ]; then
   echo "   ✓ Role already assigned"
 else
   az role assignment create \
-    --assignee "$APP_ID" \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
     --role "$ROLE" \
     --scope "/subscriptions/$SUBSCRIPTION_ID" \
     --only-show-errors > /dev/null
@@ -102,14 +125,17 @@ RG_SCOPE="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/rg-condomanager"
 
 echo ""
 echo "▶  Assigning '$UAA_ROLE' role at $RG_SCOPE..."
-if az role assignment list \
+EXISTING_UAA="$(az role assignment list \
      --assignee "$APP_ID" \
      --scope "$RG_SCOPE" \
-     --role "$UAA_ROLE" --query '[0].id' -o tsv | grep -q .; then
+     --role "$UAA_ROLE" \
+     --query '[0].id' -o tsv 2>/dev/null || true)"
+if [ -n "$EXISTING_UAA" ]; then
   echo "   ✓ $UAA_ROLE already assigned at RG scope"
 else
   az role assignment create \
-    --assignee "$APP_ID" \
+    --assignee-object-id "$SP_OBJECT_ID" \
+    --assignee-principal-type ServicePrincipal \
     --role "$UAA_ROLE" \
     --scope "$RG_SCOPE" \
     --only-show-errors > /dev/null
@@ -149,7 +175,7 @@ PROVIDER_POLL_SECS=10
 ensure_provider () {
   local ns="$1"
   local state
-  state="$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || echo "Unknown")"
+  state="$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null | tr -d '\r' || echo "Unknown")"
   if [ "$state" = "Registered" ]; then
     echo "   ✓ $ns already Registered"
     return 0
@@ -158,7 +184,7 @@ ensure_provider () {
   az provider register --namespace "$ns" --only-show-errors > /dev/null
   local waited=0
   while [ "$waited" -lt "$PROVIDER_WAIT_SECS" ]; do
-    state="$(az provider show --namespace "$ns" --query registrationState -o tsv)"
+    state="$(az provider show --namespace "$ns" --query registrationState -o tsv | tr -d '\r')"
     if [ "$state" = "Registered" ]; then
       echo "   ✓ $ns Registered (after ${waited}s)"
       return 0
