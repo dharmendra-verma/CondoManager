@@ -1,6 +1,11 @@
 // SWA managed Function: GET /api/ticket?code=TKT-XXXXXXXX (CM-37).
 // Validates the code, looks the ticket up, and returns the tenant-safe public
 // projection. Registered via the @azure/functions v4 programming model.
+//
+// CM-61 redeploy marker: forces a fresh function-app content hash so the SWA
+// managed Functions backend provisions a new host that serves the tenant admin
+// routes (the prior same-commit re-deploys were deduped and the live host kept
+// serving the pre-fix routing). Safe no-op comment.
 
 import {
   type HttpRequest,
