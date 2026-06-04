@@ -58,6 +58,10 @@ param secretNames array = [
   'google-drive-sa-key'
 ]
 
+@description('App Insights connection string (CM-57). When non-empty, the app-insights-connection-string secret is created at deploy time so the Container App can resolve its secretRef on a FRESH deploy — before the post-deploy seed script has run. Empty (default) skips it, preserving back-compat for dev/standalone/tests. @secure() keeps the value out of deployment-history plaintext.')
+@secure()
+param appInsightsConnectionString string = ''
+
 var vaultName = 'kv-condomanager-${env}'
 // Built-in role: Key Vault Secrets User — read secret values only.
 // https://learn.microsoft.com/azure/role-based-access-control/built-in-roles#key-vault-secrets-user
@@ -104,6 +108,28 @@ resource kvSecretsUserAssignment 'Microsoft.Authorization/roleAssignments@2022-0
     // ServicePrincipal is the correct value for MI object IDs — User/Group
     // would cause Azure to try to look up the principal in a user directory.
     principalType: 'ServicePrincipal'
+  }
+}
+
+// CM-57: the app-insights-connection-string secret, populated at deploy time
+// from the App Insights module output (a value main.bicep already surfaces as a
+// @secure output). WHY this ONE secret is set in Bicep — unlike the others, which
+// seed-keyvault-secrets.sh populates out-of-band with REPLACE-ME — the hello-world
+// Container App mounts it via secretRef at revision start, so it MUST exist before
+// the app provisions. On a fresh deploy the post-deploy seed-app-insights-secret.sh
+// has not run yet, so the Container App failed with "unable to fetch secret
+// 'appinsights-conn'" and the whole deployment errored. Creating it here — inside
+// the KV module the app already depends on via vaultUri — guarantees it exists in
+// time and that the MI's Key Vault Secrets User role (above) is already assigned.
+// The value is generated at deploy time from a freshly-created resource, not
+// committed to source; main.bicep already exposes it as a @secure output, so this
+// adds no new deployment-history exposure. The seed script remains valid as an
+// idempotent re-seed / rotation path. Empty param (dev/standalone/tests) skips it.
+resource appInsightsSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (!empty(appInsightsConnectionString)) {
+  parent: vault
+  name: 'app-insights-connection-string'
+  properties: {
+    value: appInsightsConnectionString
   }
 }
 
