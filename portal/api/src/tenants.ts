@@ -15,7 +15,6 @@ import {
   type HttpRequest,
   type HttpResponseInit,
   type InvocationContext,
-  app,
 } from "@azure/functions";
 
 import { type Tenant, validateTenantInput } from "./tenant";
@@ -175,16 +174,8 @@ export async function tenantItemHandler(
   }
 }
 
-app.http("tenantsCollection", {
-  methods: ["GET", "POST"],
-  authLevel: "anonymous", // TODO(auth): gated only by TENANT_ADMIN_ENABLED for now
-  route: "admin/tenants",
-  handler: tenantsCollectionHandler,
-});
-
-app.http("tenantItem", {
-  methods: ["GET", "PUT", "DELETE"],
-  authLevel: "anonymous", // TODO(auth): gated only by TENANT_ADMIN_ENABLED for now
-  route: "admin/tenants/{id}",
-  handler: tenantItemHandler,
-});
+// NOTE: the app.http() registrations for these handlers live in ./index.ts (the
+// package.json "main" entry) — NOT here. On the SWA managed-functions host,
+// registrations made outside the entry file are not served at runtime. See the
+// CM-61 note in index.ts. This module owns the handlers + logic; index.ts wires
+// the routes.
