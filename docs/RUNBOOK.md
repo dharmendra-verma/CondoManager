@@ -9,6 +9,62 @@
 
 ---
 
+## Prod — live app URLs & how to use it (CM-59)
+
+CM-59 deployed the **real** runtime to prod: the agent-runtime container image
+(replacing the hello-world placeholder), the tenant portal on Static Web Apps,
+and the CM-55 web-chat channel as the public inbound entry point.
+
+| Surface | URL |
+|---|---|
+| **Agent runtime / web chat** (Container App) | `https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io` |
+| **Tenant portal** (Static Web App) | `https://zealous-sky-067feb00f.7.azurestaticapps.net` |
+
+> ⚠️ The web chat is a **TEST** channel: hardcoded `mobile → tenant` map
+> (`agents/webchat/tenants.py`), no OTP/real auth (CM-55/CM-56 own that). It is
+> the prod demo/smoke entry point, not a real tenant channel. Container App
+> scale-to-zero means the first request after idle has a cold-start delay.
+
+**Container App endpoints** — `GET /healthz` (always 200), `POST /web/login`,
+`POST /web/message` (the last two 404 unless `WEBCHAT_TEST_ENABLED=1`, which
+prod sets):
+
+```bash
+BASE="https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io"
+
+curl -s "$BASE/healthz"                        # -> {"status":"ok","channel_enabled":true}
+
+curl -s -X POST "$BASE/web/login" \
+  -H 'content-type: application/json' \
+  -d '{"mobile":"+919876543210"}'              # -> {"tenant_id":"condo-tower-a","name":"Asha Rao","unit":"4B"}
+
+curl -s -X POST "$BASE/web/message" \
+  -H 'content-type: application/json' \
+  -d '{"mobile":"+919876543210","content":"The kitchen tap in unit 4B is leaking."}'
+# -> {"reply":"...","stub":<bool>,"channel":"web","intent":"...","masked_content":"..."}
+```
+
+Test tenant mobiles: `+919876543210` (Asha Rao, 4B), `+919812345678`
+(Vikram Singh, 2A), `+14155550100` (Jordan Lee, 12C). A `stub:true` reply means
+the live agent loop degraded gracefully (e.g. no LLM creds) but the message still
+flowed end to end; `stub:false` is a real agent reply.
+
+**Scripted smoke test** (asserts the whole flow, then prints the App Insights
+KQL to confirm the trace landed):
+
+```bash
+az login                                       # reader on rg-condomanager
+bash infra/scripts/smoke-test-prod.sh
+```
+
+**How it deploys:** push to `main` → `deploy.yml` → `build-agent-image`
+(`az acr build` → `acrcondomanagerprod.azurecr.io/agent:<sha>`) →
+`deploy-prod` (Bicep with `agentImage=<tag>`, MI pulls via AcrPull, port 8000,
+`WEBCHAT_TEST_ENABLED=1`) → `deploy-portal-prod` (gated on
+`PORTAL_DEPLOY_ENABLED=true`, now set; SWA token via OIDC). See `docs/CICD.md`.
+
+---
+
 ## 0. Audience & prerequisites
 
 **Audience:** platform-team operator with Owner or Contributor access to the

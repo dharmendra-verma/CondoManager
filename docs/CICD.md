@@ -15,7 +15,7 @@ For the high-level topology (single RG, dev + prod, no staging) see
 | Workflow | Trigger | Purpose | Cancel-in-progress |
 |---|---|---|---|
 | `build.yml`  | `pull_request`, `push:main`, `workflow_dispatch` | Per-area lint + tests + what-if + PR summary comment | yes (PR pushes coalesce) |
-| `deploy.yml` | `push:main` (paths: `infra/**`, `portal/**`, `deploy.yml`), `release:published`, `workflow_dispatch` | Prod-only Azure deploys into `rg-condomanager` | **no** (never cancel mid-deploy) |
+| `deploy.yml` | `push:main` (paths: `infra/**`, `portal/**`, `deploy.yml`), `release:published`, `workflow_dispatch` | Build the agent image → ACR, then prod-only Azure deploys into `rg-condomanager` | **no** (never cancel mid-deploy) |
 
 > **Prod-only, no approval gate.** The `dev` jobs were intentionally removed and
 > the `prod` GitHub Environment has **no required reviewers** (see the header of
@@ -31,14 +31,37 @@ For the high-level topology (single RG, dev + prod, no staging) see
 |-----------------------------------------|---------------|----------------------------------------------------------|-------------|---------------|
 | PR opened / updated                     | `build.yml`   | `detect`, `lint-infra` (if infra changed), `what-if-infra` (if infra changed), `summary` | none        | none          |
 | Push to `main` touching `infra/`        | `build.yml`   | `detect`, `lint-infra`                                   | none        | none          |
-| Push to `main` touching `infra/`/`portal/` | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if `PORTAL_DEPLOY_ENABLED=true`) | `prod`      | none          |
-| GitHub Release published                | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
-| `workflow_dispatch` (`target_env=prod`) | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
+| Push to `main` touching `infra/`/`portal/` | `deploy.yml`  | `build-agent-image` → `deploy-prod` (+ `deploy-portal-prod` if `PORTAL_DEPLOY_ENABLED=true`) | `prod`      | none          |
+| GitHub Release published                | `deploy.yml`  | `build-agent-image` → `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
+| `workflow_dispatch` (`target_env=prod`) | `deploy.yml`  | `build-agent-image` → `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
 
 > `deploy-portal-prod` is additionally gated on the repo variable
-> `PORTAL_DEPLOY_ENABLED == 'true'` (CM-37) so `main` stays green until the
-> operator provisions the Static Web App. It fetches the SWA deployment token
-> just-in-time via OIDC (`az staticwebapp secrets list`) — no stored token secret.
+> `PORTAL_DEPLOY_ENABLED == 'true'` (CM-37). It was **set to `true` in CM-59**, so
+> the portal now deploys on every prod run. The job fetches the SWA deployment
+> token just-in-time via OIDC (`az staticwebapp secrets list`) — no stored token
+> secret. To pause portal deploys again, set the variable to `false`.
+
+### Agent image build (CM-59)
+
+`build-agent-image` runs **before** `deploy-prod` on every prod run. It builds
+`infra/docker/agent/Dockerfile` server-side via `az acr build` (no Docker in the
+runner; the OIDC SP holds `AcrPush`) and pushes two tags to `acrcondomanagerprod`:
+`agent:<git-sha>` (immutable, the one `deploy-prod` pins) and `agent:latest`.
+`deploy-prod` passes that tag as the Bicep `agentImage` param, which flips the
+Container App from the hello-world placeholder to the agent runtime — port 8000,
+private ACR pull via the shared MI's `AcrPull` grant (`acr-rbac.bicep`), and
+`WEBCHAT_TEST_ENABLED=1` so the CM-55 web-chat channel is the live entry point.
+
+It runs on **every** deploy (not just image changes) so `agentImage` is always a
+real tag; otherwise an infra- or portal-only change would pass an empty param and
+revert the Container App to hello-world. See `docs/RUNBOOK.md` for the live URLs
+and the prod smoke test.
+
+> **First-deploy note:** the MI's `AcrPull` grant is created in the same
+> deployment that the Container App pulls in. RBAC propagation can lag a few
+> seconds; `deploy-prod` serializes the Container App behind the role assignment
+> (`dependsOn`), but if a brand-new grant hasn't propagated, the first revision
+> may fail the pull — re-running the deploy (idempotent) clears it.
 
 ---
 

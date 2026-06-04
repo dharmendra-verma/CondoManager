@@ -1,0 +1,28 @@
+# Build context for infra/docker/agent/Dockerfile (CM-59). Keep the context to
+# the agent package + the lockfile; everything else is noise that would bust the
+# layer cache and bloat the upload to ACR's build agents.
+.git/
+.github/
+.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Not needed in the agent runtime image.
+docs/
+infra/
+portal/
+functions/
+tests/
+
+# Node / portal artifacts (defensive — portal/ is already excluded).
+**/node_modules/
+**/dist/
+
+# Editor / OS cruft.
+.vscode/
+.idea/
+*.md
+!README.md
