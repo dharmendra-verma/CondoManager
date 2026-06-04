@@ -74,6 +74,12 @@ param gdriveTenantId string = 'default'
 @description('Azure OpenAI endpoint for CM-34 embeddings. Empty until an Azure OpenAI resource is provisioned in a later story; the sync function skips cleanly when unset.')
 param azureOpenAiEndpoint string = ''
 
+@description('Deploy the CM-34 Google Drive → Cosmos knowledge-sync Function App (gdrive-sync). Defaults to dev-only: prod skips it so a prod deploy is not blocked by the App Service Plan VM quota (see CM-58). Override to true for prod once the quota is granted. Disabling only skips the timer-driven sync job; the core message pipeline is unaffected.')
+param deployGdriveSync bool = env == 'dev'
+
+@description('Deploy the CM-36 weekly Analytics & Forecasting digest Function App (analytics-digest). Defaults to dev-only for the same reason as deployGdriveSync (CM-58 App Service Plan quota). Override to true for prod once the quota is granted.')
+param deployAnalytics bool = env == 'dev'
+
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
   name: 'tags-${env}'
@@ -294,7 +300,9 @@ module cosmosRbac './modules/cosmos-rbac.bicep' = {
 // secrets (google-drive-sa-key, azure-openai-key) mount as KV references.
 // Depends (implicitly, via passed outputs) on cosmos + keyvault + managed
 // identity + app insights.
-module functions './modules/functions.bicep' = {
+// CM-58: gated on deployGdriveSync (dev-only by default) so prod is not blocked
+// by the App Service Plan VM quota until that quota is granted.
+module functions './modules/functions.bicep' = if (deployGdriveSync) {
   name: 'functions-${env}'
   params: {
     env: env
@@ -314,7 +322,9 @@ module functions './modules/functions.bicep' = {
 // Dedicated Linux Consumption Function App (separate from gdrive-sync) so the
 // weekly schedule + failures are isolated. Reads tickets + escalations from
 // Cosmos via the shared MI; posts the digest to the slack-webhook-url KV ref.
-module analytics './modules/analytics.bicep' = {
+// CM-58: gated on deployAnalytics (dev-only by default) — same App Service Plan
+// quota reason as the gdrive-sync app above.
+module analytics './modules/analytics.bicep' = if (deployAnalytics) {
   name: 'analytics-${env}'
   params: {
     env: env
@@ -416,14 +426,18 @@ output langsmithProject string = langsmithEnabled ? langsmithProject : ''
 output langsmithEnabled bool = langsmithEnabled
 
 // CM-34 outputs — Function App identity for the post-deploy `func publish`
-// step + the gdrive-sync smoke test discovery.
-output functionAppName string = functions.outputs.functionAppName
-output functionAppId string = functions.outputs.functionAppId
-output functionAppDefaultHostName string = functions.outputs.functionAppDefaultHostName
+// step + the gdrive-sync smoke test discovery. Empty string when the app is not
+// deployed (CM-58: deployGdriveSync=false), so tooling can detect "not deployed".
+// `.?` safe-dereferences the conditional module (null when not deployed) and
+// `?? ''` collapses that to an empty string — avoids BCP318 on the access.
+output functionAppName string = functions.?outputs.functionAppName ?? ''
+output functionAppId string = functions.?outputs.functionAppId ?? ''
+output functionAppDefaultHostName string = functions.?outputs.functionAppDefaultHostName ?? ''
 
 // CM-36 — analytics digest Function App (used by the deploy step + smoke test).
-output analyticsFunctionAppName string = analytics.outputs.functionAppName
-output analyticsFunctionAppId string = analytics.outputs.functionAppId
+// Empty string when not deployed (CM-58: deployAnalytics=false).
+output analyticsFunctionAppName string = analytics.?outputs.functionAppName ?? ''
+output analyticsFunctionAppId string = analytics.?outputs.functionAppId ?? ''
 
 // CM-37 outputs — SWA name + hostname for the post-deploy token wiring +
 // the tenant-facing URL.
