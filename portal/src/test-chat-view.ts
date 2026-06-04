@@ -33,6 +33,12 @@ const messageInput = document.querySelector<HTMLInputElement>("#message");
 const chatError = document.querySelector<HTMLParagraphElement>("#chat-error");
 const logoutBtn = document.querySelector<HTMLButtonElement>("#logout-btn");
 
+// API base: empty (same-origin, served via the vite dev proxy) for local dev.
+// The prod SWA build sets VITE_WEBCHAT_API_BASE to the Container App URL so the
+// browser calls the agent API cross-origin — CORS allows the SWA origin (CM-60).
+// Trailing slash trimmed so `${API_BASE}/web/...` never doubles up.
+const API_BASE = (import.meta.env.VITE_WEBCHAT_API_BASE ?? "").replace(/\/$/, "");
+
 // The single source of truth for "are we logged in" — in memory only.
 let session: ChatSession | null = null;
 
@@ -84,7 +90,7 @@ function renderTurn(turn: ChatTurn): void {
 async function doLogin(mobile: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch("/web/login", {
+    res = await fetch(`${API_BASE}/web/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(loginPayload(mobile)),
@@ -113,7 +119,7 @@ async function doSend(content: string): Promise<void> {
 
   let res: Response;
   try {
-    res = await fetch("/web/message", {
+    res = await fetch(`${API_BASE}/web/message`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(messagePayload(mobileFromInput, content)),

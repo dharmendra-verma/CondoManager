@@ -18,6 +18,7 @@ The vite dev server (portal, :5173) calls these endpoints cross-origin during
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -31,14 +32,20 @@ from .service import UnknownTenantError, handle_message, resolve_tenant
 
 app = FastAPI(title="condomanager-webchat-test", docs_url=None, redoc_url=None)
 
-# Local dev only: the SPA dev server calls these endpoints cross-origin. The
-# whole app is dev/test-gated, and the origins are restricted to localhost.
+# The SPA calls these endpoints cross-origin. In local dev that's the vite dev
+# server (localhost:5173); in prod the portal is served from the Static Web App,
+# a different origin than this Container App. CM-60: WEBCHAT_CORS_ORIGINS (set by
+# container-app.bicep to the SWA origin) is appended to the allow-list — comma-
+# separated; empty/unset (local dev, tests) leaves just the localhost origins.
+_DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
+_EXTRA_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("WEBCHAT_CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=_DEV_ORIGINS + _EXTRA_ORIGINS,
     allow_methods=["POST"],
     allow_headers=["content-type"],
 )

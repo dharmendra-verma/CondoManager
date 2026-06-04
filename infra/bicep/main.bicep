@@ -273,6 +273,9 @@ module containerApp './modules/container-app.bicep' = {
     targetPort: containerTargetPort
     registryServer: hasAgentImage ? acr.outputs.loginServer : ''
     webchatEnabled: hasAgentImage
+    // CM-60: allow the prod portal (Static Web App) origin to call /web/* from
+    // the browser. Creates an implicit dependency on the staticWebApp module.
+    webchatCorsOrigins: hasAgentImage ? 'https://${staticWebApp.outputs.defaultHostname}' : ''
   }
   // The MI's AcrPull grant must exist before the revision pulls the private
   // image at start. dependsOn is unconditional (acrRbac always deploys); it is

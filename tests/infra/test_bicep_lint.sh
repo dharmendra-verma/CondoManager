@@ -803,6 +803,26 @@ else
   FAIL=1
 fi
 
+# CM-60: cross-origin wiring so the prod portal browser can reach the web-chat API.
+echo "▶  Verifying container-app.bicep wires WEBCHAT_CORS_ORIGINS + main.bicep passes the SWA origin (CM-60)"
+if grep -Eq "param[[:space:]]+webchatCorsOrigins[[:space:]]+string" "$CA_BICEP" \
+   && grep -Fq "name: 'WEBCHAT_CORS_ORIGINS'" "$CA_BICEP" \
+   && grep -Fq "webchatCorsOrigins:" "$BICEP_DIR/main.bicep" \
+   && grep -Fq "staticWebApp.outputs.defaultHostname" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ webchatCorsOrigins param + WEBCHAT_CORS_ORIGINS env + SWA origin wiring present"
+else
+  echo "   ✗ CM-60 cross-origin wiring missing (webchatCorsOrigins / WEBCHAT_CORS_ORIGINS / SWA origin)"
+  FAIL=1
+fi
+
+echo "▶  Verifying deploy.yml bakes VITE_WEBCHAT_API_BASE into the portal build (CM-60)"
+if grep -Fq "VITE_WEBCHAT_API_BASE" "$DEPLOY_WF"; then
+  echo "   ✓ VITE_WEBCHAT_API_BASE set for the SWA build"
+else
+  echo "   ✗ deploy.yml does NOT set VITE_WEBCHAT_API_BASE — prod chat page would call the SWA origin"
+  FAIL=1
+fi
+
 # ---------------------------------------------------------------------------
 # CM-25 — Operations workbook over App Insights
 # ---------------------------------------------------------------------------

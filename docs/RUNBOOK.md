@@ -49,6 +49,13 @@ Test tenant mobiles: `+919876543210` (Asha Rao, 4B), `+919812345678`
 the live agent loop degraded gracefully (e.g. no LLM creds) but the message still
 flowed end to end; `stub:false` is a real agent reply.
 
+**Browser chat (no curl, no local dev — CM-60):** open
+`https://zealous-sky-067feb00f.7.azurestaticapps.net/test-chat.html`, enter a
+test mobile (e.g. `+919876543210`), and chat. The page calls the Container App
+API cross-origin — the prod build bakes in `VITE_WEBCHAT_API_BASE` (the Container
+App URL) and the agent app's CORS allows the SWA origin via `WEBCHAT_CORS_ORIGINS`.
+It's still the TEST channel (hardcoded tenant map, no OTP).
+
 **Scripted smoke test** (asserts the whole flow, then prints the App Insights
 KQL to confirm the trace landed):
 
