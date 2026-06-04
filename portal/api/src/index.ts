@@ -11,6 +11,11 @@ import {
 
 import { lookupTicketByCode } from "./cosmos";
 import { toPublicTicket } from "./shape";
+// CM-61: side-effect import so the tenant admin functions (app.http registrations
+// in ./tenants) load at startup. The Functions host loads only this entry module
+// (package.json "main"); without this import the /api/admin/tenants routes are
+// never registered and the SWA returns a bare 404 — see CM-61.
+import "./tenants";
 
 const CODE_RE = /^TKT-[0-9A-F]{8}$/;
 
