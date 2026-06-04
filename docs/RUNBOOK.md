@@ -18,7 +18,7 @@ and the CM-55 web-chat channel as the public inbound entry point.
 | Surface | URL |
 |---|---|
 | **Agent runtime / web chat** (Container App) | `https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io` |
-| **Tenant portal** (Static Web App) | `https://zealous-sky-067feb00f.7.azurestaticapps.net` |
+| **Tenant portal** (Static Web App) | `https://wonderful-pebble-094fa600f.7.azurestaticapps.net` |
 
 > ⚠️ The web chat is a **TEST** channel: hardcoded `mobile → tenant` map
 > (`agents/webchat/tenants.py`), no OTP/real auth (CM-55/CM-56 own that). It is
@@ -50,7 +50,7 @@ the live agent loop degraded gracefully (e.g. no LLM creds) but the message stil
 flowed end to end; `stub:false` is a real agent reply.
 
 **Browser chat (no curl, no local dev — CM-60):** open
-`https://zealous-sky-067feb00f.7.azurestaticapps.net/test-chat.html`, enter a
+`https://wonderful-pebble-094fa600f.7.azurestaticapps.net/test-chat.html`, enter a
 test mobile (e.g. `+919876543210`), and chat. The page calls the Container App
 API cross-origin — the prod build bakes in `VITE_WEBCHAT_API_BASE` (the Container
 App URL) and the agent app's CORS allows the SWA origin via `WEBCHAT_CORS_ORIGINS`.
@@ -705,20 +705,34 @@ curl -s "https://$SWA_URL/api/ticket?code=TKT-1A2B3C4D" | python -m json.tool
 ### 11.5 Tenant admin page (`/admin`)
 
 The admin page (`https://<SWA_URL>/admin`, CM-56) does tenant master CRUD via the
-managed Functions API at `/api/admin/tenants`. Three things must hold for it to
-work — the first is code, the other two are operator-set app settings:
+managed Functions API at **`/api/tenants`** (collection) and `/api/tenants/{id}`
+(item). Three things must hold for it to work — the first is code, the other two
+are operator-set app settings:
 
-1. **Routes registered (code).** The entry module `portal/api/src/index.ts` must
-   import `./tenants` so its `app.http(...)` registrations run at startup — the
-   host loads only the `package.json` `"main"` file. Without it the routes are
-   never registered and the SWA returns a **bare 404** (`Content-Length: 0`, an
-   `x-ms-middleware-request-id` header, no JSON body). This was the CM-61 bug.
+1. **Function registration + route placement (code, CM-61).** Two distinct SWA
+   gotchas bit this:
+   - Every `app.http(...)` registration MUST live in the `package.json` `"main"`
+     entry file (`portal/api/src/index.ts`). Registrations in another module
+     pulled in via a side-effect `import` or a multi-file `main` glob are **not
+     served** by the SWA managed-functions host (its bundling drops them) — even
+     though they still show up in the ARM functions list.
+   - The route must **not** sit under `/api/admin/*`. The SWA edge does not
+     forward `/api/admin/*` paths to the Functions backend — they return a **bare
+     404** (`Content-Length: 0`, `x-ms-middleware-request-id`, no body) before
+     reaching any function. `/api/<non-admin>` paths (incl. multi-segment like
+     `/api/tenants/{id}`) forward fine; exact rules like `/api/ticket` are also
+     fine. Verified with live probes. Hence the API lives at `/api/tenants`, and
+     `staticwebapp.config.json` no longer has an `/api/admin/*` route rule.
 2. **`TENANT_ADMIN_ENABLED=1`** app setting on `swa-condomanager-prod`. The
    handlers are fail-closed: without it every call returns the handler's own
-   `404 {"error":"not_found"}` JSON by design.
+   `404 {"error":"not_found"}` JSON (note: a *JSON* 404, distinct from the bare
+   edge 404 above).
 3. **`COSMOS_CONNECTION_STRING`** app setting (+ the `tenants` Cosmos container).
    Unset/`REPLACE-ME` falls back to an in-memory store that is per-instance and
-   lost on cold start — fine for offline dev, useless for a real admin page.
+   lost on cold start — fine for offline dev, useless for a real admin page. NB:
+   the KV secret `cosmos-connection-string` shipped as the literal `REPLACE-ME`
+   placeholder; it was seeded with the real Cosmos primary connection string as
+   part of CM-61 (this also un-broke `/api/ticket?code=` lookups).
 
 ```bash
 # Set the two app settings on the prod SWA (operator action):
@@ -731,15 +745,17 @@ az staticwebapp appsettings set \
       --name cosmos-connection-string --query value -o tsv)"
 
 # Verify the route is registered AND enabled (expect a JSON array, HTTP 200):
-curl -s -i "https://<SWA_URL>/api/admin/tenants" | head -n 5
+curl -s -i "https://<SWA_URL>/api/tenants" | head -n 5
 ```
 
-> ⚠️ **Security — unauthenticated PII.** `/api/admin/*` has **no authentication**
+> ⚠️ **Security — unauthenticated PII.** `/api/tenants` has **no authentication**
 > and serves tenant name/unit/mobile/email. The `TODO(auth)` markers in
 > `portal/api/src/tenants.ts` are explicit: real auth (SWA roles / AAD) MUST land
 > before exposing this on a public origin. Setting `TENANT_ADMIN_ENABLED=1` on a
 > public prod SWA exposes tenant CRUD to anyone with the URL — acceptable only
-> for a personal test environment with throwaway data.
+> for a personal test environment with throwaway data. When real auth lands, gate
+> `/api/tenants` via a mechanism that does **not** break SWA function forwarding
+> (a `/api/admin/*`-style wildcard role rule bare-404s the path — see point 1).
 
 ---
 
