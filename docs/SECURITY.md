@@ -112,7 +112,7 @@ container).
 | **CC3** Risk assessment | Threat modeling + pen-test prep | — | ⛔ deferred (CM-Epic 13) |
 | **CC4** Monitoring | App Insights spans, alerts, ops workbook | CM-22/25/26 | ✅ |
 | **CC5** Control activities | IaC reviews, branch protection + required reviewers on `prod` | CM-19/40 | 🟡 CM-40 in flight |
-| **CC6** Logical & physical access | AAD-only data-plane RBAC (no account keys), KV RBAC + purge protection, field-level redaction | CM-18, **CM-38 §3** | ✅ (key-auth disable = follow-up) |
+| **CC6** Logical & physical access | AAD-only data-plane RBAC (no account keys), KV RBAC + purge protection, field-level redaction | CM-18, **CM-38 §3** | ✅ data-plane; ⚠️ **app-layer auth pending** — web chat + tenant admin are unauthenticated (§7) |
 | **CC7** System operations | PII masking at log + trace layers; audit logging of data access | **CM-38 §2/§4** | ✅ |
 | **CC8** Change management | Conventional Commits + Jira key, CI gates (lint/test/what-if), GitHub Environments | CM-15/19 | ✅ |
 | **CC9** Risk mitigation | Data retention + right-to-erasure; budget guardrails | **CM-38 §5**, CM-26 | ✅ |
@@ -124,6 +124,18 @@ out of scope here.
 
 ## 7. Open gaps (tracked, not silently dropped)
 
+- **Unauthenticated PII surfaces are live in prod (test-grade).** Two tenant-facing
+  endpoints are gated only by feature flags, **not identity**, and serve tenant PII
+  (name / unit / mobile / email) to anyone with the URL when enabled:
+  - the **CM-55 web chat** (`/web/*` on the Container App, hardcoded tenant map,
+    flag `WEBCHAT_TEST_ENABLED`);
+  - the **CM-56 tenant admin API** (`/api/tenants` CRUD on the Static Web App,
+    flag `TENANT_ADMIN_ENABLED`).
+
+  This is acceptable only for the current personal **test** environment. **Real auth
+  (SWA roles / Azure AD) MUST land before private beta** — tracked as the deferred
+  CM-56 follow-up / CM-Epic 13. See [`PORTAL.md`](PORTAL.md) §5 and the `TODO(auth)`
+  markers in `portal/api/src/tenants.ts` / `agents/webchat/`.
 - Threat modeling + pen-test (CC3) — CM-Epic 13.
 - Disable Cosmos key-based auth once all workloads are confirmed on AAD.
 - Tamper-evident audit (hash chain / immutable export) — CM-Epic 13.

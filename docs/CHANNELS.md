@@ -5,7 +5,7 @@
 ## TL;DR for a new joiner
 
 Tenants reach CondoManager over **many** channels — WhatsApp, Telegram, email,
-and a plain web form. Each channel hands us a **different-shaped** payload. The
+and a web chat. Each channel hands us a **different-shaped** payload. The
 job of this layer is to flatten all of them into **one** shape —
 `NormalizedMessage` — so that every agent downstream (Triage, Maintenance, …)
 only ever has to understand that single shape. Add a new channel later and *zero*
@@ -19,7 +19,7 @@ in, one language goes out.
   WhatsApp  ──┐           │            Channel layer             │
   Telegram  ──┤           │  ┌─────────────┐    ┌──────────────┐ │
   Email     ──┼──raw──────┼─►│  Adapter    │───►│ Normalized   │ │──► Triage
-  Web form  ──┘  payload  │  │ .normalize()│    │  Message     │ │    (CM-30)
+  Web chat  ──┘  payload  │  │ .normalize()│    │  Message     │ │    (CM-30)
                           │  └─────────────┘    └──────────────┘ │     and
                           │   (one per channel)  (one shape for   │   every
                           │                       everyone)       │   agent
@@ -31,6 +31,17 @@ CM-29 ships the **framework**: the `NormalizedMessage` schema, the
 stubs. The real WhatsApp / Telegram / Email adapters and the real
 audio-transcription / image-OCR preprocessors are follow-up stories that just
 fill in the slots — the contract here doesn't move.
+
+> **Live today — the `web` channel.** The `web` channel already has a real,
+> deployed implementation: the **CM-55 web chat** (`agents/webchat/`), which is
+> CondoManager's public prod entry point. It reuses the reference `WebAdapter`
+> below (`web.py`) to normalize, then runs the message through the triage
+> pipeline. It is **TEST-only**: `POST /web/login` + `/web/message` resolve the
+> sender against a **hardcoded tenant map** (`agents/webchat/tenants.py`), have
+> **no auth/OTP**, and return `404` unless `WEBCHAT_TEST_ENABLED` is set. Real
+> auth is a deferred follow-up — see [`SECURITY.md`](SECURITY.md) §7. The
+> WhatsApp / Telegram / Email adapters remain framework stubs awaiting their
+> stories.
 
 ---
 
@@ -181,6 +192,7 @@ fast path (Pydantic + adapter logic), not a real vendor round-trip.
 | This layer hands off to / depends on | Doc |
 |---|---|
 | The LangGraph spine consumes `AgentState.normalized` | [`docs/AGENTS.md`](AGENTS.md) |
+| The live `web` channel (CM-55 web chat, test-only) + its auth caveat | [`SECURITY.md`](SECURITY.md) §7, [`RUNBOOK.md`](RUNBOOK.md) |
 | PII masking on `content` | [`docs/OBSERVABILITY.md`](OBSERVABILITY.md) §"Structured logging" |
 | KV secrets for channel credentials | [`docs/INFRA.md`](INFRA.md) §Key Vault |
 | Big-picture request lifecycle | [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) |

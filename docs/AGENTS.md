@@ -14,6 +14,14 @@ trivial state updates and the same run produces traces in both
 **App Insights** (via CM-22 Azure Monitor exporter) and **LangSmith**
 (via CM-23 LangChain callback) when both backends are configured.
 
+> **Live entry point (prod).** Today the message that enters this spine arrives
+> from the **CM-55 web chat** (`agents/webchat/` → `WebAdapter` → triage), a
+> **TEST** channel: hardcoded tenant map, no auth, flag-gated. The other channels
+> (WhatsApp / Telegram / email) are built but not yet wired. See
+> [`CHANNELS.md`](CHANNELS.md) for the entry layer and [`SECURITY.md`](SECURITY.md)
+> §7 for the auth caveat. The demo below runs the *identical* graph offline with
+> no channel and no credentials.
+
 ---
 
 ## 1. Topology
