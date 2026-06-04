@@ -56,19 +56,21 @@ app.http("ticket", {
   handler: ticketHandler,
 });
 
-// CM-56 tenant admin CRUD — registered here (not in tenants.ts) so the SWA host
-// actually serves them; see the CM-61 note at the top. Handlers + their logic
-// live in ./tenants (unit-tested); this file only wires the routes.
+// CM-56 tenant admin CRUD. Routed under /api/tenants (NOT /api/admin/*): on the
+// SWA, paths under /api/admin/* are not forwarded to the managed Functions
+// backend (a bare 404 at the edge — confirmed with live probes for CM-61),
+// whereas /api/<non-admin> paths forward fine. Handlers + logic live in
+// ./tenants (unit-tested); this file only wires the routes.
 app.http("tenantsCollection", {
   methods: ["GET", "POST"],
   authLevel: "anonymous", // TODO(auth): gated only by TENANT_ADMIN_ENABLED for now
-  route: "admin/tenants",
+  route: "tenants",
   handler: tenantsCollectionHandler,
 });
 
 app.http("tenantItem", {
   methods: ["GET", "PUT", "DELETE"],
   authLevel: "anonymous", // TODO(auth): gated only by TENANT_ADMIN_ENABLED for now
-  route: "admin/tenants/{id}",
+  route: "tenants/{id}",
   handler: tenantItemHandler,
 });

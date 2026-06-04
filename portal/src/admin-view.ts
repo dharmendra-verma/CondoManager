@@ -15,7 +15,10 @@ import {
   validateTenantForm,
 } from "./admin";
 
-const API = "/api/admin/tenants";
+// /api/tenants (NOT /api/admin/*): the SWA edge does not forward /api/admin/*
+// paths to the managed Functions backend — they bare-404 before reaching the
+// function (confirmed for CM-61). Non-admin /api paths forward fine.
+const API = "/api/tenants";
 
 const form = document.querySelector<HTMLFormElement>("#tenant-form");
 const errorEl = document.querySelector<HTMLParagraphElement>("#form-error");
