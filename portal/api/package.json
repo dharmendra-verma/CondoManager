@@ -2,7 +2,7 @@
   "name": "condomanager-portal-api",
   "version": "0.1.0",
   "description": "SWA managed Functions API for the tenant status portal (CM-37).",
-  "main": "dist/src/index.js",
+  "main": "dist/src/{index.js,tenants.js}",
   "scripts": {
     "build": "tsc",
     "lint": "eslint .",

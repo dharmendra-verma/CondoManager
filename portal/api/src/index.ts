@@ -1,11 +1,6 @@
 // SWA managed Function: GET /api/ticket?code=TKT-XXXXXXXX (CM-37).
 // Validates the code, looks the ticket up, and returns the tenant-safe public
 // projection. Registered via the @azure/functions v4 programming model.
-//
-// CM-61 redeploy marker: forces a fresh function-app content hash so the SWA
-// managed Functions backend provisions a new host that serves the tenant admin
-// routes (the prior same-commit re-deploys were deduped and the live host kept
-// serving the pre-fix routing). Safe no-op comment.
 
 import {
   type HttpRequest,
@@ -16,10 +11,13 @@ import {
 
 import { lookupTicketByCode } from "./cosmos";
 import { toPublicTicket } from "./shape";
-// CM-61: side-effect import so the tenant admin functions (app.http registrations
-// in ./tenants) load at startup. The Functions host loads only this entry module
-// (package.json "main"); without this import the /api/admin/tenants routes are
-// never registered and the SWA returns a bare 404 — see CM-61.
+// CM-61: belt-and-suspenders side-effect import of the tenant admin functions.
+// The PRIMARY discovery mechanism is the package.json "main" glob
+// ("dist/src/{index.js,tenants.js}"), which makes the Functions host load
+// tenants.js directly as an entry module. On the SWA managed-functions host a
+// single-file "main" + this side-effect import alone did NOT register the
+// tenant routes at runtime (/api/admin/tenants returned a bare 404 even though
+// build-time analysis listed them) — the glob is what fixes it. See CM-61.
 import "./tenants";
 
 const CODE_RE = /^TKT-[0-9A-F]{8}$/;
