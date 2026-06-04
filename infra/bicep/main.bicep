@@ -31,7 +31,7 @@ param env string = 'dev'
 @description('Azure region. Defaults to the resource group location so dev and prod stay co-located.')
 param location string = resourceGroup().location
 
-@description('Enable the Cosmos DB free tier. Only ONE free-tier account is allowed per subscription — set to false for prod if the subscription already has one.')
+@description('Enable the Cosmos DB free tier. Only ONE free-tier account is allowed per subscription. This param only takes effect for env=dev; prod always deploys with the free tier OFF (see the cosmos module wiring below) because dev already claims the one allowed free-tier account.')
 param cosmosEnableFreeTier bool = true
 
 @description('Embedding vector dimensions for the policies-vector container. 1536 matches OpenAI text-embedding-ada-002 / text-embedding-3-small.')
@@ -208,6 +208,13 @@ module keyvault './modules/keyvault.bicep' = {
     location: location
     tags: tagsModule.outputs.tags
     managedIdentityPrincipalId: managedIdentity.outputs.principalId
+    // CM-57: seed the app-insights-connection-string secret at deploy time from
+    // the App Insights output so the Container App's secretRef resolves on a
+    // fresh deploy. The container app already depends on this module (via
+    // vaultUri), so creating the secret here guarantees it exists before the app
+    // provisions. Supersedes the chicken-and-egg post-deploy seed for this one
+    // secret (seed-app-insights-secret.sh stays valid for rotation/re-seed).
+    appInsightsConnectionString: appInsights.outputs.connectionString
   }
 }
 
@@ -254,7 +261,13 @@ module cosmos './modules/cosmos.bicep' = {
     env: env
     location: location
     tags: tagsModule.outputs.tags
-    enableFreeTier: cosmosEnableFreeTier
+    // CM-57: Azure allows only ONE free-tier Cosmos account per subscription.
+    // dev already holds it, so prod MUST request enableFreeTier=false or the
+    // deploy fails with "Free tier has already been applied to another Azure
+    // Cosmos DB account in this subscription". Force it off for prod regardless
+    // of the cosmosEnableFreeTier param (which main.parameters.json pins to true
+    // for the dev default) — the param only takes effect in dev.
+    enableFreeTier: cosmosEnableFreeTier && env == 'dev'
     vectorDimensions: cosmosVectorDimensions
   }
 }
