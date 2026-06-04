@@ -7,7 +7,7 @@
 ## 1. What is CondoManager?
 
 A **multi-agent platform for condominium maintenance & inquiry management.**
-Tenants message the platform over WhatsApp / Telegram / email / a web form. A
+Tenants message the platform over WhatsApp / Telegram / email / a web chat. A
 **LangGraph orchestrator** reads each message, decides what it is, and routes it
 to a specialist **agent** (Triage → Maintenance / Knowledge / Escalation / Vendor),
 with a human-in-the-loop (HITL) gate for sensitive cases. Everything is
@@ -24,12 +24,23 @@ metrics.
 > flows through a graph of nodes, and one `request_id` ties together every log,
 > trace, and metric for that message.**
 
+> **What's actually live today (Phase 0) — designed vs deployed.** The full agent
+> graph below is the *design*. CM-59 deployed the **real** runtime to **prod**: the
+> agent Container App, the portal on a Static Web App, and a **web-chat test
+> channel** as the public entry point. Live prod URLs + the operator runbook are in
+> [`RUNBOOK.md`](RUNBOOK.md). Two surfaces are intentionally still **test-grade and
+> unauthenticated**: the web chat (hardcoded tenant map, no OTP — CM-55/60) and the
+> tenant **admin page** (`/api/tenants` CRUD, gated only by a feature flag —
+> CM-56/61). Real auth is the deferred follow-up that must land before either is
+> more than a test surface. The other channels (WhatsApp / Telegram / email) are
+> built but need credentials/config to go live.
+
 ## 2. The 10,000-foot view
 
 ```mermaid
 flowchart TB
     subgraph Channels["Channel layer (CM-29) [Azure Container Apps]"]
-        WA[WhatsApp] & TG[Telegram] & EM[Email] & WEB[Web form]
+        WA[WhatsApp] & TG[Telegram] & EM[Email] & WEB[Web chat<br/>test CM-55/60]
     end
     Channels -->|NormalizedMessage| ORCH
 
@@ -52,7 +63,7 @@ flowchart TB
         AN[analytics-digest CM-36] -->|weekly digest| SLACK[Slack<br/>external SaaS]
     end
 
-    COSMOS --> PORTAL[Tenant status portal CM-37<br/>Azure Static Web App]
+    COSMOS --> PORTAL[Tenant portal CM-37/56<br/>Azure Static Web App<br/>status + admin + web-chat pages]
 
     ORCH -.traces/logs/metrics.-> OBS[(App Insights + Azure Monitor<br/>appi-/law-condomanager-*<br/>+ LangSmith/Langfuse SaaS)]
 ```
@@ -68,7 +79,7 @@ suffix (`dev` or `prod`); per-env resources sit side-by-side in the one RG.
 | Orchestrator networking | VNet + delegated subnet, Container Apps environment | `vnet-condomanager-<env>`, `cae-condomanager-<env>` | `vnet.bicep`, `container-apps-env.bicep` |
 | Orchestrator container image | Azure Container Registry (Basic SKU) | `acrcondomanager<env>` | `acr.bicep` |
 | Background jobs (gdrive-sync, analytics-digest) | Azure Functions (Consumption / Y1) | `func-condomanager-<env>` | `functions.bicep` |
-| Tenant status portal | Azure Static Web App (Free) + managed Functions API | `swa-condomanager-<env>` | `static-web-app.bicep` |
+| Tenant portal — status lookup + tenant admin (`/api/tenants`) + web-chat test page | Azure Static Web App (Free) + managed Functions API | `swa-condomanager-<env>` | `static-web-app.bicep` |
 | Cosmos boxes (tickets, escalations, policies-vector, digests, ...) | Azure Cosmos DB (NoSQL + vector search) | `cosmos-condomanager-<env>` | `cosmos.bicep` |
 | Secrets (read via Managed Identity) | Azure Key Vault (RBAC) + User-Assigned MI | `kv-condomanager-<env>`, `id-condomanager-<env>` | `keyvault.bicep`, `managed-identity.bicep` |
 | Observability sink (traces / logs / metrics) | Application Insights + Log Analytics + Azure Monitor | `appi-condomanager-<env>`, `law-condomanager-<env>` | `app-insights.bicep`, `log-analytics.bicep` |
@@ -83,7 +94,7 @@ Each box is also a doc:
 | **Channels** | Flatten every channel's payload into one `NormalizedMessage` | [`CHANNELS.md`](CHANNELS.md) |
 | **Orchestrator + agents** | The LangGraph spine + the specialist agents | [`AGENTS.md`](AGENTS.md), [`TRIAGE.md`](TRIAGE.md), [`ESCALATION.md`](ESCALATION.md), [`ANALYTICS.md`](ANALYTICS.md) |
 | **Background jobs** | Timer jobs: knowledge sync + weekly digest | [`FUNCTIONS.md`](FUNCTIONS.md) |
-| **Tenant portal** | Read-only ticket status lookup by code | [`PORTAL.md`](PORTAL.md) |
+| **Tenant portal** | Read-only ticket lookup, tenant admin CRUD, web-chat test page (+ the SWA platform gotchas) | [`PORTAL.md`](PORTAL.md) |
 | **Observability** | Traces, logs, metrics, dashboards, alerts | [`OBSERVABILITY.md`](OBSERVABILITY.md), [`PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md) |
 | **Security & compliance** | PII detection/masking, field RBAC, audit, retention | [`SECURITY.md`](SECURITY.md) |
 | **Infrastructure** | Azure resources (Bicep), CI/CD | [`INFRA.md`](INFRA.md), [`CICD.md`](CICD.md) |
@@ -168,7 +179,8 @@ One Cosmos account, one `condomanager` database, several containers:
 | `policies-vector` | gdrive-sync (CM-34) | Chunked + embedded policy docs for RAG |
 | `checkpoints` | Orchestrator (CM-28) | LangGraph run checkpoints (30-day TTL) |
 | `digests` | analytics-digest (CM-36) | Weekly digests (90-day TTL) |
-| `conversations`, `tenants` | (foundation) | Conversation history, tenant records |
+| `tenants` | Portal admin page (CM-56), partition `/id` | Tenant master records (name, unit, mobile, email); managed via `/api/tenants` CRUD |
+| `conversations` | (foundation) | Conversation history |
 
 Cosmos doubles as the **vector store**: `VectorDistance()` returns a cosine
 *similarity* (`1.0` = identical) — a subtlety that bit us once and is documented
@@ -193,7 +205,7 @@ access, and a retention/right-to-erasure routine backs the SOC2 posture — see
       |-- Container Apps    (ca-...-condomanager-<env>)  <- agents/orchestrator + channel adapters
       |-- Container Registry(acrcondomanager<env>)       <- orchestrator image (Basic SKU)
       |-- Azure Functions   (func-condomanager-<env>)    <- gdrive-sync + analytics-digest
-      |-- Static Web App    (swa-condomanager-<env>)     <- tenant portal (+ managed API)
+      |-- Static Web App    (swa-condomanager-<env>)     <- tenant portal: status + admin + web-chat (+ /api)
       |-- Cosmos DB         (cosmos-condomanager-<env>)  <- documents + vector search
       |-- Key Vault + MI    (kv-/id-condomanager-<env>)  <- secrets, read via Managed Identity
       `-- App Insights+Mon  (appi-/law-condomanager-<env>) <- traces, dashboards, alerts
