@@ -72,3 +72,16 @@ app.http("tenantItem", {
   route: "admin/tenants/{id}",
   handler: tenantItemHandler,
 });
+
+// CM-61 DIAGNOSTIC (temporary — remove once root cause is fixed). Three probes
+// that cross route-shape × config-rule to isolate why admin/tenants 404s:
+//   /api/diagplain    single segment, NOT under a config rule
+//   /api/diag/plain   multi  segment, NOT under a config rule
+//   /api/admin/diag   multi  segment, UNDER the /api/admin/* config rule (like tenants)
+const diagOk = (which: string) => async (): Promise<HttpResponseInit> => ({
+  status: 200,
+  jsonBody: { diag: which },
+});
+app.http("diagPlain", { methods: ["GET"], authLevel: "anonymous", route: "diagplain", handler: diagOk("plain") });
+app.http("diagPlainNested", { methods: ["GET"], authLevel: "anonymous", route: "diag/plain", handler: diagOk("plain-nested") });
+app.http("diagAdmin", { methods: ["GET"], authLevel: "anonymous", route: "admin/diag", handler: diagOk("admin-nested") });
