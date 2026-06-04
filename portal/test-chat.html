@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex" />
+    <title>CondoManager — Web Chat (test)</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="app chat">
+      <h1>Web chat <span class="tag">test</span></h1>
+      <!-- TEST-ONLY channel (CM-55). Hardcoded mobile->tenant creds, no OTP.
+           The backend API is gated by WEBCHAT_TEST_ENABLED and disabled in
+           staging/prod. Session is in-memory only — refresh = re-login. -->
+      <p class="lede warn">
+        Test harness — log in with a hardcoded test mobile number. Disabled
+        outside dev/test.
+      </p>
+
+      <section id="login-view" class="card">
+        <h2>Log in</h2>
+        <form id="login-form" novalidate>
+          <label for="mobile">Mobile number</label>
+          <input
+            id="mobile"
+            name="mobile"
+            type="tel"
+            autocomplete="off"
+            placeholder="+919876543210"
+            required
+          />
+          <button id="login-btn" type="submit">Continue</button>
+          <p id="login-error" class="error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <section id="chat-view" class="card" hidden>
+        <div class="chat-header">
+          <span id="whoami" class="whoami"></span>
+          <button id="logout-btn" type="button" class="link">Log out</button>
+        </div>
+        <div id="thread" class="thread" aria-live="polite"></div>
+        <form id="composer" novalidate>
+          <label for="message" class="sr-only">Message</label>
+          <input
+            id="message"
+            name="message"
+            type="text"
+            autocomplete="off"
+            placeholder="Type a message to the condo manager…"
+            required
+          />
+          <button id="send-btn" type="submit">Send</button>
+          <p id="chat-error" class="error" role="alert" hidden></p>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="/src/test-chat-view.ts"></script>
+  </body>
+</html>
