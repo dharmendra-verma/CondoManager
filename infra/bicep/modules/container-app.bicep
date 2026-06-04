@@ -83,6 +83,12 @@ param langsmithProjectName string = ''
 @description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU.')
 param langsmithEndpoint string = 'https://api.smith.langchain.com'
 
+@description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
+param registryServer string = ''
+
+@description('When true, sets WEBCHAT_TEST_ENABLED=1 so the CM-55 web-chat channel is live — the prod inbound entry point (CM-59). Default false keeps the endpoints 404 ("not deployed") for the hello-world shell and any caller that does not opt in.')
+param webchatEnabled bool = false
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
 // Both must be present — Container Apps secretRef resolution requires the
@@ -93,6 +99,10 @@ var hasAppInsights = hasIdentity && !empty(appInsightsKvSecretUri)
 // (we'd ship a key with no project routing); fail closed rather than send to
 // LangSmith's "default" project.
 var hasLangsmith = hasIdentity && !empty(langsmithKvSecretUri) && !empty(langsmithProjectName)
+// A private ACR pull needs the MI: Container Apps resolves the registry
+// `identity` against AcrPull at revision start. Without an identity we can only
+// pull public images (the hello-world default), so omit the registries block.
+var hasRegistry = hasIdentity && !empty(registryServer)
 
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: containerAppName
@@ -116,6 +126,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         transport: 'auto'
         allowInsecure: false
       }
+      // CM-59: authenticate private ACR pulls via the attached MI (which holds
+      // AcrPull — see acr-rbac.bicep). Empty for the public hello-world image.
+      registries: hasRegistry ? [
+        {
+          server: registryServer
+          identity: userAssignedIdentityId
+        }
+      ] : []
       // KV-backed secrets resolved through the MI at revision start.
       // Container Apps caches secrets per revision; rotating a value in KV
       // requires a new revision to pick it up — acceptable because the
@@ -176,6 +194,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'LANGCHAIN_ENDPOINT'
                 value: langsmithEndpoint
+              }
+            ] : [],
+            // CM-59: enable the CM-55 web-chat channel in prod. The flag module
+            // (agents/webchat/flag.py) reads this at call time; without it the
+            // /web/* endpoints 404, so the channel is inert unless opted in.
+            webchatEnabled ? [
+              {
+                name: 'WEBCHAT_TEST_ENABLED'
+                value: '1'
               }
             ] : []
           )

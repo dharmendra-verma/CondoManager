@@ -80,6 +80,17 @@ param deployGdriveSync bool = env == 'dev'
 @description('Deploy the CM-36 weekly Analytics & Forecasting digest Function App (analytics-digest). Defaults to dev-only for the same reason as deployGdriveSync (CM-58 App Service Plan quota). Override to true for prod once the quota is granted.')
 param deployAnalytics bool = env == 'dev'
 
+@description('Fully-qualified agent-runtime image to run on the Container App (CM-59), e.g. acrcondomanager<env>.azurecr.io/agent:<git-sha>. Empty (default) keeps the public hello-world placeholder image — so an infra-only deploy (or any deploy that does not first build the image) stays green. deploy.yml builds the image via `az acr build` and passes this param. When set, the Container App switches to port 8000, authenticates the pull via the MI (AcrPull, acr-rbac.bicep), and enables the CM-55 web-chat channel (WEBCHAT_TEST_ENABLED=1).')
+param agentImage string = ''
+
+// CM-59: a real agent image flips the Container App from the public hello-world
+// shell (port 80, anonymous MCR pull, channel off) to the agent runtime (port
+// 8000, private ACR pull via the MI, web-chat channel on). Computed once here so
+// the three coupled settings can't drift apart.
+var hasAgentImage = !empty(agentImage)
+var containerImage = hasAgentImage ? agentImage : 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var containerTargetPort = hasAgentImage ? 8000 : 80
+
 // Tag schema — every downstream resource carries the same five tags.
 module tagsModule './tags.bicep' = {
   name: 'tags-${env}'
@@ -256,7 +267,17 @@ module containerApp './modules/container-app.bicep' = {
     langsmithKvSecretUri: langsmithEnabled ? langsmithKvSecretUri : ''
     langsmithProjectName: langsmithEnabled ? langsmithProject : ''
     langsmithEndpoint: langsmithEndpoint
+    // CM-59: real agent image (or the hello-world default) + its coupled port,
+    // private-pull registry, and channel flag.
+    image: containerImage
+    targetPort: containerTargetPort
+    registryServer: hasAgentImage ? acr.outputs.loginServer : ''
+    webchatEnabled: hasAgentImage
   }
+  // The MI's AcrPull grant must exist before the revision pulls the private
+  // image at start. dependsOn is unconditional (acrRbac always deploys); it is
+  // a harmless ordering edge when the hello-world image is in use.
+  dependsOn: [ acrRbac ]
 }
 
 // Cosmos DB account + condomanager database + 4 containers (tenants,
@@ -361,6 +382,22 @@ module acr './modules/acr.bicep' = {
     location: location
     tags: tagsModule.outputs.tags
   }
+}
+
+// CM-59 — grant the shared MI AcrPull on the registry so the agent-runtime
+// Container App can pull its private image (acrcondomanager<env>.azurecr.io/
+// agent:<tag>). CM-20 created the registry but deferred this grant. Wired
+// unconditionally (harmless while the hello-world image is in use); the
+// Container App dependsOn this so the role exists before the first pull.
+module acrRbac './modules/acr-rbac.bicep' = {
+  name: 'acr-rbac-${env}'
+  params: {
+    env: env
+    principalId: managedIdentity.outputs.principalId
+  }
+  // The role assignment references the registry by name via `existing`, so Bicep
+  // can't infer it must wait for acr.bicep to create it.
+  dependsOn: [ acr ]
 }
 
 // Resource group identity outputs (kept from CM-15 for OIDC + scope smoke test).

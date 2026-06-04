@@ -732,6 +732,78 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# CM-59 — agent-runtime image + ACR pull + web-chat entry channel
+# ---------------------------------------------------------------------------
+
+ACR_RBAC="$MODULES_DIR/acr-rbac.bicep"
+AGENT_DF="$ROOT/infra/docker/agent/Dockerfile"
+DEPLOY_WF="$ROOT/.github/workflows/deploy.yml"
+# AcrPull built-in role definition GUID.
+ACR_PULL_ROLE='7f951dda-4ed3-4680-a7ca-43fe172d538d'
+
+echo "▶  Verifying acr-rbac.bicep grants the MI AcrPull (role $ACR_PULL_ROLE)"
+if [ -s "$ACR_RBAC" ] && grep -Fq "$ACR_PULL_ROLE" "$ACR_RBAC"; then
+  echo "   ✓ AcrPull role GUID present in acr-rbac.bicep"
+else
+  echo "   ✗ acr-rbac.bicep missing or does NOT reference the AcrPull role — Container App cannot pull the private image"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires the acr-rbac module + agentImage param"
+if grep -Fq "modules/acr-rbac.bicep" "$BICEP_DIR/main.bicep" \
+   && grep -Eq "param[[:space:]]+agentImage[[:space:]]+string" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ acr-rbac module + agentImage param wired into main.bicep"
+else
+  echo "   ✗ main.bicep does NOT wire acr-rbac.bicep or the agentImage param"
+  FAIL=1
+fi
+
+echo "▶  Verifying compiled ARM contains the AcrPull role assignment"
+if grep -Fq "$ACR_PULL_ROLE" /tmp/main.json; then
+  echo "   ✓ AcrPull role assignment present in compiled ARM"
+else
+  echo "   ✗ AcrPull role assignment MISSING from compiled ARM"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep accepts registryServer + webchatEnabled params"
+if grep -Eq "param[[:space:]]+registryServer[[:space:]]+string" "$CA_BICEP" \
+   && grep -Eq "param[[:space:]]+webchatEnabled[[:space:]]+bool" "$CA_BICEP"; then
+  echo "   ✓ registryServer + webchatEnabled params present"
+else
+  echo "   ✗ container-app.bicep missing registryServer or webchatEnabled param"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep mounts WEBCHAT_TEST_ENABLED + a registries block"
+if grep -Fq "name: 'WEBCHAT_TEST_ENABLED'" "$CA_BICEP" \
+   && grep -Eq "registries:[[:space:]]*hasRegistry" "$CA_BICEP"; then
+  echo "   ✓ WEBCHAT_TEST_ENABLED env var + conditional registries block present"
+else
+  echo "   ✗ container-app.bicep does NOT wire WEBCHAT_TEST_ENABLED or the registries block"
+  FAIL=1
+fi
+
+echo "▶  Verifying the agent Dockerfile exists and serves the web-chat app via uvicorn"
+if [ -s "$AGENT_DF" ] \
+   && grep -Fq "uvicorn agents.webchat.app:app" "$AGENT_DF"; then
+  echo "   ✓ infra/docker/agent/Dockerfile runs uvicorn on agents.webchat.app"
+else
+  echo "   ✗ agent Dockerfile missing or does NOT launch agents.webchat.app via uvicorn"
+  FAIL=1
+fi
+
+echo "▶  Verifying deploy.yml builds the agent image (az acr build) + passes agentImage"
+if grep -Fq "az acr build" "$DEPLOY_WF" \
+   && grep -Fq "build-agent-image" "$DEPLOY_WF" \
+   && grep -Fq "agentImage=" "$DEPLOY_WF"; then
+  echo "   ✓ deploy.yml wires build-agent-image (az acr build) + agentImage param"
+else
+  echo "   ✗ deploy.yml does NOT build the agent image or pass the agentImage param"
+  FAIL=1
+fi
+
+# ---------------------------------------------------------------------------
 # CM-25 — Operations workbook over App Insights
 # ---------------------------------------------------------------------------
 

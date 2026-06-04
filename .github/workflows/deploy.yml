@@ -55,8 +55,57 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # CM-59: build the agent-runtime image and push it to ACR *before* the bicep
+  # deploy, so `deploy-prod` can point the Container App at a freshly-built,
+  # immutable tag. Built server-side via `az acr build` (no Docker-in-Actions);
+  # the OIDC SP holds AcrPush (CM-20). Runs on EVERY deploy so `agentImage` is
+  # always a real tag — otherwise an infra/portal-only change would pass an empty
+  # agentImage and revert the Container App to the hello-world placeholder.
+  build-agent-image:
+    name: Build agent image → ACR
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      || github.event_name == 'release'
+      || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'prod')
+    runs-on: ubuntu-latest
+    environment: prod
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: az acr build (agent runtime)
+        id: build
+        run: |
+          IMAGE="acrcondomanagerprod.azurecr.io/agent:${{ github.sha }}"
+          az acr build \
+            --registry acrcondomanagerprod \
+            --image "agent:${{ github.sha }}" \
+            --image "agent:latest" \
+            --file infra/docker/agent/Dockerfile \
+            .
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Write step summary
+        run: |
+          {
+            echo "### Agent image build — success"
+            echo ""
+            echo "* Registry: \`acrcondomanagerprod\`"
+            echo "* Image: \`acrcondomanagerprod.azurecr.io/agent:${{ github.sha }}\` (+ \`:latest\`)"
+            echo "* Dockerfile: \`infra/docker/agent/Dockerfile\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   deploy-prod:
     name: Deploy → prod
+    needs: build-agent-image
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main')
       || github.event_name == 'release'
@@ -80,7 +129,8 @@ jobs:
             --name cm-rg-prod-${{ github.run_number }} \
             --template-file infra/bicep/main.bicep \
             --parameters infra/bicep/main.parameters.json \
-            --parameters env=prod
+            --parameters env=prod \
+            --parameters agentImage='${{ needs.build-agent-image.outputs.image }}'
 
       - name: Write step summary
         run: |
@@ -89,6 +139,7 @@ jobs:
             echo ""
             echo "* Resource group: \`rg-condomanager\`"
             echo "* Deployment name: \`cm-rg-prod-${{ github.run_number }}\`"
+            echo "* Agent image: \`${{ needs.build-agent-image.outputs.image }}\`"
             echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
           } >> "$GITHUB_STEP_SUMMARY"
 

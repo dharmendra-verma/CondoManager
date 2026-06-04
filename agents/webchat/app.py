@@ -59,6 +59,18 @@ def _require_enabled() -> None:
         raise HTTPException(status_code=404, detail="not_found")
 
 
+@app.get("/healthz")
+def healthz() -> dict[str, Any]:
+    """Liveness probe — ALWAYS 200, independent of WEBCHAT_TEST_ENABLED (CM-59).
+
+    The Container App ingress probe and the prod smoke test hit this to confirm
+    the runtime is up. It deliberately does NOT reveal whether the chat channel
+    is enabled (``/web/*`` still 404s when the flag is off), so the gate posture
+    is unchanged — this only reports that the process is serving HTTP.
+    """
+    return {"status": "ok", "channel_enabled": is_webchat_enabled()}
+
+
 @app.post("/web/login")
 def login(req: LoginRequest) -> dict[str, str]:
     """Validate a mobile number against the hardcoded test tenants."""
