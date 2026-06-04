@@ -138,4 +138,10 @@ jobs:
 
       - name: Write step summary
         run: |
-   
+          {
+            echo "### Deploy portal → prod — success"
+            echo ""
+            echo "* Static Web App: \`swa-condomanager-prod\`"
+            echo "* App location: \`portal\` · API: \`portal/api\` · output: \`dist\`"
+            echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"

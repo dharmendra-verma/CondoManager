@@ -15,18 +15,30 @@ For the high-level topology (single RG, dev + prod, no staging) see
 | Workflow | Trigger | Purpose | Cancel-in-progress |
 |---|---|---|---|
 | `build.yml`  | `pull_request`, `push:main`, `workflow_dispatch` | Per-area lint + tests + what-if + PR summary comment | yes (PR pushes coalesce) |
-| `deploy.yml` | `push:main` (paths: `infra/**`), `release:published`, `workflow_dispatch` | Per-env Azure deploys into `rg-condomanager` | **no** (never cancel mid-deploy) |
+| `deploy.yml` | `push:main` (paths: `infra/**`, `portal/**`, `deploy.yml`), `release:published`, `workflow_dispatch` | Prod-only Azure deploys into `rg-condomanager` | **no** (never cancel mid-deploy) |
+
+> **Prod-only, no approval gate.** The `dev` jobs were intentionally removed and
+> the `prod` GitHub Environment has **no required reviewers** (see the header of
+> `.github/workflows/deploy.yml` and `infra/scripts/setup-github-environments.sh`).
+> A push to `main` therefore deploys straight to prod with no approval prompt. To
+> restore an approval gate, add the repo owner back to the prod `reviewers` array
+> in that script and re-run it. To re-enable `dev`, restore the `deploy-dev` /
+> `deploy-portal-dev` jobs from git history.
 
 ### Trigger → action matrix
 
-| Trigger                                | Workflow      | Job(s) that run                                          | Environment | Approver gate |
-|----------------------------------------|---------------|----------------------------------------------------------|-------------|---------------|
-| PR opened / updated                    | `build.yml`   | `detect`, `lint-infra` (if infra changed), `what-if-infra` (if infra changed), `summary` | none        | none          |
-| Push to `main` touching `infra/`       | `build.yml`   | `detect`, `lint-infra`                                   | none        | none          |
-| Push to `main` touching `infra/`       | `deploy.yml`  | `deploy-dev`                                             | `dev`       | none          |
-| GitHub Release published               | `deploy.yml`  | `deploy-prod`                                            | `prod`      | **manual**    |
-| `workflow_dispatch` (`target_env=dev`) | `deploy.yml`  | `deploy-dev`                                             | `dev`       | none          |
-| `workflow_dispatch` (`target_env=prod`)| `deploy.yml`  | `deploy-prod`                                            | `prod`      | **manual**    |
+| Trigger                                 | Workflow      | Job(s) that run                                          | Environment | Approver gate |
+|-----------------------------------------|---------------|----------------------------------------------------------|-------------|---------------|
+| PR opened / updated                     | `build.yml`   | `detect`, `lint-infra` (if infra changed), `what-if-infra` (if infra changed), `summary` | none        | none          |
+| Push to `main` touching `infra/`        | `build.yml`   | `detect`, `lint-infra`                                   | none        | none          |
+| Push to `main` touching `infra/`/`portal/` | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if `PORTAL_DEPLOY_ENABLED=true`) | `prod`      | none          |
+| GitHub Release published                | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
+| `workflow_dispatch` (`target_env=prod`) | `deploy.yml`  | `deploy-prod` (+ `deploy-portal-prod` if enabled)        | `prod`      | none          |
+
+> `deploy-portal-prod` is additionally gated on the repo variable
+> `PORTAL_DEPLOY_ENABLED == 'true'` (CM-37) so `main` stays green until the
+> operator provisions the Static Web App. It fetches the SWA deployment token
+> just-in-time via OIDC (`az staticwebapp secrets list`) — no stored token secret.
 
 ---
 
@@ -54,14 +66,16 @@ cover four subjects:
 
 | Subject                                                                | Used by                                  |
 |------------------------------------------------------------------------|------------------------------------------|
-| `repo:dharmendra-verma/CondoManager:ref:refs/heads/main`               | (legacy — kept for back-compat)          |
+| `repo:dharmendra-verma/CondoManager:ref:refs/heads/main`               | `deploy.yml` → push-to-`main` prod deploys |
 | `repo:dharmendra-verma/CondoManager:pull_request`                      | `build.yml` → `what-if-infra` job        |
-| `repo:dharmendra-verma/CondoManager:environment:dev`                   | `deploy.yml` → `deploy-dev` job          |
-| `repo:dharmendra-verma/CondoManager:environment:prod`                  | `deploy.yml` → `deploy-prod` job         |
+| `repo:dharmendra-verma/CondoManager:environment:dev`                   | (legacy — kept in case `dev` is restored) |
+| `repo:dharmendra-verma/CondoManager:environment:prod`                  | `deploy.yml` → `deploy-prod` / `deploy-portal-prod` jobs |
 
-Environment-scoped subjects are tighter than ref-scoped: a job in environment
-`prod` cannot run unless GitHub has gated it through the prod approver list,
-which means OIDC token exchange is also gated.
+The `environment:prod` and `ref:refs/heads/main` subjects both authorize the
+prod deploy jobs (the job runs in environment `prod`, on a push to `main`).
+The prod environment currently has **no required reviewers**, so OIDC token
+exchange is not gated behind an approval — the gate is purely a GitHub
+Environment protection rule, independent of how the job authenticates.
 
 ### Pre-flight: verify the OIDC plumbing
 
@@ -73,7 +87,7 @@ gh secret list --repo dharmendra-verma/CondoManager
 APP_ID=$(az ad app list --display-name github-condomanager-infra --query '[0].appId' -o tsv)
 az ad app federated-credential list --id "$APP_ID" --query '[].{name:name, subject:subject}' -o table
 
-# 3. Check both GitHub Environments exist (dev should have no approvers, prod should have at least one)
+# 3. Check the prod GitHub Environment exists (currently NO required reviewers — prod-only, no gate)
 gh api repos/dharmendra-verma/CondoManager/environments --jq '.environments[] | {name, protection_rules}'
 ```
 
@@ -102,8 +116,8 @@ gh run watch
 ```
 
 The `gh release create` command fires `deploy.yml` with event `release` and
-type `published`. The `deploy-prod` job enters the `prod` environment and
-waits for an approver. Once approved, it runs:
+type `published`. The `deploy-prod` job enters the `prod` environment and —
+because that environment has no required reviewers — runs immediately:
 
 ```bash
 az deployment group create \
@@ -117,14 +131,14 @@ az deployment group create \
 ### Re-deploying without cutting a new release
 
 Use `workflow_dispatch`. From the GitHub Actions UI: **Actions → deploy → Run
-workflow → target_env: dev (or prod)**. Or via CLI:
+workflow → target_env: prod** (prod is the only option). Or via CLI:
 
 ```bash
 gh workflow run deploy.yml -f target_env=prod
 ```
 
-A `target_env=prod` run still requires manual approval — `environment: prod`
-is enforced by GitHub regardless of trigger.
+The run executes immediately — `environment: prod` currently has no required
+reviewers, so there is no approval prompt regardless of trigger.
 
 ---
 
@@ -140,16 +154,24 @@ bash tests/infra/test_bicep_lint.sh
 Federated credential mismatch. Check that `repo:dharmendra-verma/CondoManager:pull_request`
 exists on the Azure AD app — see the pre-flight section above.
 
-### `deploy.yml` → `deploy-dev` failed with `403 Forbidden`
+### `deploy.yml` shows "Invalid workflow file" and nothing runs
+The whole workflow is rejected at parse time before any job runs — usually a YAML
+schema error (e.g. a step with an empty `run:` body). GitHub annotates the
+offending line. Fix the YAML and push; validate locally first with
+`python -c "import yaml; yaml.safe_load(open('.github/workflows/deploy.yml'))"`.
+
+### `deploy.yml` → `deploy-prod` failed with `403 Forbidden`
 Two common causes:
 1. The service principal lost its `Contributor` role on `rg-condomanager`. Re-run
    `infra/scripts/setup-azure-oidc.sh` to re-grant.
-2. The `dev` GitHub Environment doesn't exist. Create it under
-   **Settings → Environments → New environment** (no approver needed for dev).
+2. The `prod` GitHub Environment doesn't exist. Create it under
+   **Settings → Environments → New environment** (no approver needed — prod-only,
+   no gate; see `infra/scripts/setup-github-environments.sh`).
 
-### `deploy.yml` → `deploy-prod` stuck on "Waiting for review"
-Approver hasn't acted yet. Go to **Actions → the run → Review deployments → approve**.
-If you're the approver, you'll also see a notification in your GitHub inbox.
+### `deploy.yml` → `deploy-portal-prod` skipped unexpectedly
+This job only runs when the repo variable `PORTAL_DEPLOY_ENABLED == 'true'` (CM-37).
+If the portal isn't deploying, check **Settings → Secrets and variables → Actions →
+Variables** and confirm the SWA (`swa-condomanager-prod`) has been provisioned.
 
 ### Sticky PR comment shows stale data
 `marocchino/sticky-pull-request-comment@v2` keys on header `ci-summary`. If a
