@@ -180,6 +180,11 @@ jobs:
 
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
+        env:
+          # CM-60: baked into the vite build so the prod chat page calls the
+          # Container App API cross-origin (CORS allows the SWA origin). Empty in
+          # local dev keeps /web/* same-origin via the vite proxy.
+          VITE_WEBCHAT_API_BASE: https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io
         with:
           azure_static_web_apps_api_token: ${{ steps.swatoken.outputs.token }}
           action: upload

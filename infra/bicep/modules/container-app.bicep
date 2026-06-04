@@ -89,6 +89,9 @@ param registryServer string = ''
 @description('When true, sets WEBCHAT_TEST_ENABLED=1 so the CM-55 web-chat channel is live — the prod inbound entry point (CM-59). Default false keeps the endpoints 404 ("not deployed") for the hello-world shell and any caller that does not opt in.')
 param webchatEnabled bool = false
 
+@description('Comma-separated extra CORS origins for the web-chat app (CM-60), set as WEBCHAT_CORS_ORIGINS so the prod portal (Static Web App) — a different origin than this Container App — can call /web/* from the browser. Empty (default) leaves only the localhost dev origins the app hardcodes. Only emitted when webchatEnabled is true.')
+param webchatCorsOrigins string = ''
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
 // Both must be present — Container Apps secretRef resolution requires the
@@ -199,12 +202,19 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // CM-59: enable the CM-55 web-chat channel in prod. The flag module
             // (agents/webchat/flag.py) reads this at call time; without it the
             // /web/* endpoints 404, so the channel is inert unless opted in.
-            webchatEnabled ? [
+            // CM-60: when a cross-origin portal origin is supplied, add
+            // WEBCHAT_CORS_ORIGINS so the browser SPA on the SWA can call /web/*.
+            webchatEnabled ? concat([
               {
                 name: 'WEBCHAT_TEST_ENABLED'
                 value: '1'
               }
-            ] : []
+            ], empty(webchatCorsOrigins) ? [] : [
+              {
+                name: 'WEBCHAT_CORS_ORIGINS'
+                value: webchatCorsOrigins
+              }
+            ]) : []
           )
         }
       ]
