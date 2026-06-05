@@ -31,7 +31,8 @@ from agents.observability import mask_pii
 from agents.orchestrator.graph import build_graph
 from agents.orchestrator.state import AgentState
 
-from .tenants import TestTenant, lookup_tenant
+from .directory import lookup_tenant
+from .tenants import TestTenant
 
 
 class UnknownTenantError(Exception):

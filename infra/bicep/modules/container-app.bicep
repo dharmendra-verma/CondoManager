@@ -92,6 +92,9 @@ param webchatEnabled bool = false
 @description('Comma-separated extra CORS origins for the web-chat app (CM-60), set as WEBCHAT_CORS_ORIGINS so the prod portal (Static Web App) — a different origin than this Container App — can call /web/* from the browser. Empty (default) leaves only the localhost dev origins the app hardcodes. Only emitted when webchatEnabled is true.')
 param webchatCorsOrigins string = ''
 
+@description('Cosmos DB account endpoint (CM-17). Emitted as COSMOS_ENDPOINT so the web-chat tenant directory (agents/webchat/directory.py) resolves logins against the live `tenants` container via DefaultAzureCredential (the attached MI holds Cosmos data-plane RBAC — see cosmos-rbac.bicep). Empty string (default) leaves the channel on its hardcoded demo numbers. Only emitted when webchatEnabled is true.')
+param cosmosEndpoint string = ''
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
 // Both must be present — Container Apps secretRef resolution requires the
@@ -204,6 +207,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // /web/* endpoints 404, so the channel is inert unless opted in.
             // CM-60: when a cross-origin portal origin is supplied, add
             // WEBCHAT_CORS_ORIGINS so the browser SPA on the SWA can call /web/*.
+            // CM-55 follow-up: COSMOS_ENDPOINT lets the web-chat tenant
+            // directory resolve logins against the live `tenants` container
+            // (DefaultAzureCredential via the attached MI). Unset -> the channel
+            // stays on its hardcoded demo numbers.
             webchatEnabled ? concat([
               {
                 name: 'WEBCHAT_TEST_ENABLED'
@@ -213,6 +220,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'WEBCHAT_CORS_ORIGINS'
                 value: webchatCorsOrigins
+              }
+            ], empty(cosmosEndpoint) ? [] : [
+              {
+                name: 'COSMOS_ENDPOINT'
+                value: cosmosEndpoint
               }
             ]) : []
           )
