@@ -373,6 +373,63 @@ az cosmosdb sql query \
 Expected: at least one row with `source` = the configured Google Drive folder ID
 and a non-null `lastPageToken`.
 
+### 4.3 Knowledge base (manual local folder → Cosmos) — CM-66
+
+For policy sets handed over as local files (bylaws, rules, SOPs) — no Google
+Drive needed. `infra/scripts/ingest-local-folder.py` walks a folder and ingests
+every supported file through the **same** pipeline as the Drive sync (chunk →
+embed → upsert into `policies-vector`).
+
+**Prerequisites:**
+- `COSMOS_ENDPOINT` set (below); the operator identity needs the **Cosmos DB
+  Built-in Data Contributor** role (same as the Function App MI) — auth is
+  `DefaultAzureCredential` (`az login` locally), no connection string.
+- Azure OpenAI embedding configured: `AZURE_OPENAI_ENDPOINT` +
+  `AZURE_OPENAI_API_KEY` (optionally `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`,
+  default `text-embedding-3-small`).
+- `.txt` / `.md` work out of the box; **`.pdf` needs the optional extra**:
+  `pip install "condomanager-agents[ingest]"` (a `.pdf` found without it is
+  reported as *unsupported* and skipped — never a crash). OCR of scanned/
+  image-only PDFs is **not** supported (text-extractable PDFs only).
+
+```bash
+export COSMOS_ENDPOINT="$(az cosmosdb show \
+  --name cosmos-condomanager-dev --resource-group rg-condomanager \
+  --query documentEndpoint -o tsv)"
+export AZURE_OPENAI_ENDPOINT="https://<your-aoai>.openai.azure.com/"
+export AZURE_OPENAI_API_KEY="<key from KV azure-openai-key>"
+
+# 1) ALWAYS preview an unfamiliar folder first — no writes, no embedding spend:
+python infra/scripts/ingest-local-folder.py \
+  --tenant tenant-smoke-test --folder ./policies --dry-run
+
+# 2) Ingest for real (mirrors the folder exactly — see the warning below):
+python infra/scripts/ingest-local-folder.py \
+  --tenant tenant-smoke-test --folder ./policies
+```
+
+> ⚠️ **The folder is authoritative — a default run MIRRORS it.** Files you have
+> previously ingested from this folder that are **no longer present are PRUNED**
+> (their chunks are deleted from Cosmos). The script prints the prune set before
+> deleting, and `--dry-run` shows exactly what *would* be pruned. To add/update
+> only and never delete, pass `--additive`.
+
+**Flags:**
+- `--dry-run` — list files + chunk counts + would-prune set; touches nothing.
+- `--additive` — upsert/update only; do **not** prune docs missing from the folder.
+- `--source <key>` — override the state key (default `local:<resolved-folder>`).
+  Keep it **stable per folder** — idempotency and pruning key off it. A different
+  `--folder`/`--source` simply starts a fresh state lineage (empty prune set), so
+  a mistyped path can't delete another folder's docs.
+
+**Summary line** reports: files seen / ingested (new or changed) / skipped
+(unchanged) / skipped (unsupported) / pruned / failed. Exit 0 = no failures.
+Re-running an unchanged folder is a no-op (content-hash skip); editing a file
+bumps its `doc_version`.
+
+**Verify** the same way as §4.2 (`knowledge_sync` state row for the `local:…`
+source; chunks in `policies-vector` for the tenant).
+
 ---
 
 ## 5. Smoke tests

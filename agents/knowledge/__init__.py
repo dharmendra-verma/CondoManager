@@ -38,6 +38,12 @@ from agents.knowledge.embeddings import (
 )
 from agents.knowledge.gdrive_client import GoogleDriveClient
 from agents.knowledge.llm import ChatModel, get_chat_model
+from agents.knowledge.local_source import (
+    SUPPORTED_EXTENSIONS,
+    LocalFolderClient,
+    default_source,
+    ingest_folder,
+)
 from agents.knowledge.models import (
     CONFIDENCE_THRESHOLD,
     Citation,
@@ -69,6 +75,8 @@ __all__ = [
     "Embedder",
     "GoogleDriveClient",
     "KnowledgeAnswer",
+    "SUPPORTED_EXTENSIONS",
+    "LocalFolderClient",
     "RetrievedChunk",
     "SyncReport",
     "SyncState",
@@ -77,8 +85,10 @@ __all__ = [
     "chunk_id",
     "chunk_text",
     "default_embedder",
+    "default_source",
     "get_chat_model",
     "get_vector_store",
+    "ingest_folder",
     "retrieve",
     "run_sync",
 ]
