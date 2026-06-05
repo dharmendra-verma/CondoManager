@@ -1,0 +1,2 @@
+# Shell scripts must be LF so they run on the Linux CI runners (CM-64).
+*.sh text eol=lf
