@@ -82,6 +82,9 @@ jobs:
       - name: Run lint test
         run: bash tests/infra/test_bicep_lint.sh
 
+      - name: Run seed-script behavioural tests (CM-64)
+        run: bash tests/infra/test_seed_swa_cosmos.sh
+
       - name: Bicep build (compile to ARM)
         run: bicep build infra/bicep/main.bicep --outfile /tmp/main.json
 
