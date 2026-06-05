@@ -27,6 +27,14 @@ See ``agents/channels/README.md`` for the recipe to add a new adapter.
 from __future__ import annotations
 
 from .base import ChannelAdapter, NormalizationError
+from .outbound import (
+    LogOutbound,
+    OutboundChannel,
+    SmtpOutbound,
+    TelegramOutbound,
+    TwilioOutbound,
+    get_outbound_channel,
+)
 from .preprocessors import (
     AudioTranscriber,
     ImageOcr,
@@ -53,10 +61,16 @@ __all__ = [
     "FileAttachment",
     "ImageAttachment",
     "ImageOcr",
+    "LogOutbound",
     "NoopAudioTranscriber",
     "NoopImageOcr",
     "NormalizationError",
     "NormalizedMessage",
+    "OutboundChannel",
+    "SmtpOutbound",
+    "TelegramOutbound",
     "TextAttachment",
+    "TwilioOutbound",
     "WebAdapter",
+    "get_outbound_channel",
 ]

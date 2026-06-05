@@ -9,6 +9,7 @@ from agents.orchestrator.notify import (
     LogNotifier,
     ManagerNotifier,
     SlackWebhookNotifier,
+    SmtpManagerNotifier,
     get_manager_notifier,
 )
 from agents.orchestrator.state import EscalationCategory, EscalationRecord
@@ -66,5 +67,71 @@ def test_selector_placeholder_logs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_selector_slack_with_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SMTP_HOST", raising=False)
     monkeypatch.setenv("SLACK_WEBHOOK_URL", _URL)
     assert isinstance(get_manager_notifier(), SlackWebhookNotifier)
+
+
+# ---- CM-50: SMTP manager notifier + multi-channel selector ----------------
+
+
+class _FakeSMTP:
+    """Minimal context-manager stub for ``smtplib.SMTP``."""
+
+    captured: dict[str, object] = {}
+
+    def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
+        _FakeSMTP.captured = {"host": host}
+
+    def __enter__(self) -> _FakeSMTP:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def starttls(self) -> None:
+        _FakeSMTP.captured["tls"] = True
+
+    def login(self, user: str, password: str) -> None:
+        _FakeSMTP.captured["login"] = (user, password)
+
+    def send_message(self, msg: object) -> None:
+        _FakeSMTP.captured["to"] = msg["To"]  # type: ignore[index]
+
+
+def test_smtp_notifier_sends(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("smtplib.SMTP", _FakeSMTP)
+    assert SmtpManagerNotifier("smtp.test", "u", "p", "mgr@x.com").notify(_rec()) is True
+    assert _FakeSMTP.captured["to"] == "mgr@x.com"
+    assert _FakeSMTP.captured["tls"] is True
+
+
+def test_smtp_notifier_returns_false_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("refused")
+
+    monkeypatch.setattr("smtplib.SMTP", _boom)
+    assert SmtpManagerNotifier("smtp.test", "u", "p", "mgr@x.com").notify(_rec()) is False
+
+
+def test_selector_email_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.setenv("MANAGER_ALERT_EMAIL", "mgr@x.com")
+    assert isinstance(get_manager_notifier(), SmtpManagerNotifier)
+
+
+def test_selector_email_needs_recipient(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SLACK_WEBHOOK_URL", raising=False)
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.delenv("MANAGER_ALERT_EMAIL", raising=False)
+    assert isinstance(get_manager_notifier(), LogNotifier)
+
+
+def test_selector_both_fans_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SLACK_WEBHOOK_URL", _URL)
+    monkeypatch.setenv("SMTP_HOST", "smtp.test")
+    monkeypatch.setenv("MANAGER_ALERT_EMAIL", "mgr@x.com")
+    n = get_manager_notifier()
+    assert type(n).__name__ == "_MultiNotifier"
+    assert isinstance(n, ManagerNotifier)

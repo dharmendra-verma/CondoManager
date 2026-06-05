@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from agents.channels.outbound import OutboundChannel, get_outbound_channel
 from agents.orchestrator.state import AgentState
 
 from . import dedup
@@ -48,11 +49,15 @@ class MaintenanceAgent:
         *,
         repository: TicketRepository | None = None,
         notifier: Notifier | None = None,
+        outbound: OutboundChannel | None = None,
         code_generator: Callable[[], str] | None = None,
         now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self._repo = repository if repository is not None else get_ticket_repository()
         self._notifier = notifier if notifier is not None else get_notifier()
+        # CM-50: when injected, the transport is used directly (tests); when not,
+        # it is resolved per-message from the originating channel at send time.
+        self._outbound = outbound
         self._gen_code = code_generator if code_generator is not None else _default_code
         self._now = now_fn if now_fn is not None else (lambda: datetime.now(UTC))
 
@@ -72,6 +77,8 @@ class MaintenanceAgent:
             unit=unit, issue_text=text, existing=existing, now=now
         )
         if duplicate is not None:
+            confirmation = tenant_confirmation(duplicate, is_duplicate=True)
+            self._send_tenant_reply(state, confirmation)
             return {
                 "output": {
                     "status": "duplicate",
@@ -81,7 +88,7 @@ class MaintenanceAgent:
                     "category": duplicate.category,
                     "priority": str(duplicate.priority),
                     "eta": duplicate.eta,
-                    "confirmation": tenant_confirmation(duplicate, is_duplicate=True),
+                    "confirmation": confirmation,
                 }
             }
 
@@ -110,6 +117,8 @@ class MaintenanceAgent:
         )
         self._repo.add(ticket)
         self._notifier.notify_manager(manager_notification(ticket))
+        confirmation = tenant_confirmation(ticket)
+        self._send_tenant_reply(state, confirmation)
 
         return {
             "output": {
@@ -122,9 +131,23 @@ class MaintenanceAgent:
                 "is_repeat": repeat,
                 "is_followup": followup is not None,
                 "followup_of": followup.id if followup is not None else None,
-                "confirmation": tenant_confirmation(ticket),
+                "confirmation": confirmation,
             }
         }
+
+    def _send_tenant_reply(self, state: AgentState, text: str) -> None:
+        """Best-effort: deliver the confirmation over the tenant's originating
+        channel (CM-50).
+
+        No-op offline: with no ``normalized`` there is no channel / ``sender_id``
+        to push to (and the web channel returns its reply via the HTTP response,
+        not a push). Never raises — a carrier miss must not break the node; the
+        transport already swallows its own failures and returns ``False``.
+        """
+        if state.normalized is None:
+            return
+        transport = self._outbound or get_outbound_channel(state.normalized.channel)
+        transport.send(state.normalized.sender_id, text)
 
     @staticmethod
     def _source_text(state: AgentState) -> str:
