@@ -276,6 +276,10 @@ module containerApp './modules/container-app.bicep' = {
     // CM-60: allow the prod portal (Static Web App) origin to call /web/* from
     // the browser. Creates an implicit dependency on the staticWebApp module.
     webchatCorsOrigins: hasAgentImage ? 'https://${staticWebApp.outputs.defaultHostname}' : ''
+    // CM-55 follow-up: let the web-chat login resolve against the live `tenants`
+    // Cosmos container (the MI already holds Cosmos data-plane RBAC via
+    // cosmosRbac). Only wired when the real agent image runs the channel.
+    cosmosEndpoint: hasAgentImage ? cosmos.outputs.endpoint : ''
   }
   // The MI's AcrPull grant must exist before the revision pulls the private
   // image at start. dependsOn is unconditional (acrRbac always deploys); it is
