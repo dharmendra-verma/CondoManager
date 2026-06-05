@@ -95,8 +95,14 @@ param webchatCorsOrigins string = ''
 @description('Cosmos DB account endpoint (CM-17). Emitted as COSMOS_ENDPOINT so the web-chat tenant directory (agents/webchat/directory.py) resolves logins against the live `tenants` container via DefaultAzureCredential (the attached MI holds Cosmos data-plane RBAC — see cosmos-rbac.bicep). Empty string (default) leaves the channel on its hardcoded demo numbers. Only emitted when webchatEnabled is true.')
 param cosmosEndpoint string = ''
 
+@description('Client (application) ID of the attached User-Assigned MI, emitted as AZURE_CLIENT_ID. REQUIRED for in-app DefaultAzureCredential to acquire a token for a USER-assigned identity — without it ManagedIdentityCredential fails with "Unable to load the proper Managed Identity" (the container has no system-assigned MI to fall back to). See managed-identity.bicep clientId output. Empty string (default) omits the env var (back-compat for the public hello-world shell with no identity).')
+param managedIdentityClientId string = ''
+
 var containerAppName = 'ca-hello-condomanager-${env}'
 var hasIdentity = !empty(userAssignedIdentityId)
+// AZURE_CLIENT_ID lets DefaultAzureCredential target the user-assigned MI. Only
+// useful (and only correct) when an identity is actually attached.
+var hasMiClientId = hasIdentity && !empty(managedIdentityClientId)
 // Both must be present — Container Apps secretRef resolution requires the
 // identity to read the KV secret at revision start.
 var hasAppInsights = hasIdentity && !empty(appInsightsKvSecretUri)
@@ -175,6 +181,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             memory: memory
           }
           env: union(
+            // AZURE_CLIENT_ID picks the user-assigned MI for any in-app
+            // DefaultAzureCredential (e.g. the web-chat Cosmos lookup). Required
+            // for user-assigned identities — see managed-identity.bicep.
+            hasMiClientId ? [
+              {
+                name: 'AZURE_CLIENT_ID'
+                value: managedIdentityClientId
+              }
+            ] : [],
             hasAppInsights ? [
               {
                 name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
