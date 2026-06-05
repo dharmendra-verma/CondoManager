@@ -263,6 +263,10 @@ module containerApp './modules/container-app.bicep' = {
     tags: tagsModule.outputs.tags
     environmentId: containerAppsEnv.outputs.environmentId
     userAssignedIdentityId: managedIdentity.outputs.identityId
+    // AZURE_CLIENT_ID for in-app DefaultAzureCredential (web-chat Cosmos lookup).
+    // Required for the user-assigned MI — without it ManagedIdentityCredential
+    // can't resolve which identity to use. See CM-62.
+    managedIdentityClientId: managedIdentity.outputs.clientId
     appInsightsKvSecretUri: appInsightsKvSecretUri
     langsmithKvSecretUri: langsmithEnabled ? langsmithKvSecretUri : ''
     langsmithProjectName: langsmithEnabled ? langsmithProject : ''
