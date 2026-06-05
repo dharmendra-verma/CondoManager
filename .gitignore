@@ -17,6 +17,8 @@ Thumbs.db
 *.pem
 *.key
 azure-credentials.json
+try_langsmith.py
+try_langfuse.py
 
 # Python (CM-21 onward)
 __pycache__/

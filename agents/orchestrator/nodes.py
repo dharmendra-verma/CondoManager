@@ -52,6 +52,7 @@ from agents.observability import (
     emit_metric,
     langgraph_node_span,
 )
+from agents.observability.langfuse_export import observe_node
 
 from . import guardrails
 from .escalation import build_record, get_escalation_classifier
@@ -86,6 +87,7 @@ def _guardrail_termination(reason: str | None) -> dict[str, Any]:
     }
 
 
+@observe_node("triage")
 def triage(state: AgentState) -> dict[str, Any]:
     """Triage Agent (CM-30) — classify intent/urgency/tone, then route.
 
@@ -153,6 +155,7 @@ def _answer_knowledge(message: str, tenant_id: str) -> tuple[KnowledgeAnswer, fl
     return answer, cost, 1
 
 
+@observe_node("knowledge")
 def knowledge(state: AgentState) -> dict[str, Any]:
     """Knowledge Agent (CM-33) — RAG over the Cosmos ``policies-vector`` store.
 
@@ -197,6 +200,7 @@ def knowledge(state: AgentState) -> dict[str, Any]:
         return update
 
 
+@observe_node("maintenance")
 def maintenance(state: AgentState) -> dict[str, Any]:
     """Maintenance node — ticket lifecycle + dedup (CM-31).
 
@@ -240,6 +244,7 @@ def maintenance(state: AgentState) -> dict[str, Any]:
         return result
 
 
+@observe_node("vendor")
 def vendor(state: AgentState) -> dict[str, Any]:
     """Vendor node — match a contractor and auto-dispatch or seek approval (CM-35).
 
@@ -276,6 +281,7 @@ def vendor(state: AgentState) -> dict[str, Any]:
         return result
 
 
+@observe_node("escalation")
 def escalation(state: AgentState) -> dict[str, Any]:
     """Escalation Agent (CM-32) — classify, record, alert, hold a draft.
 
@@ -339,6 +345,7 @@ def escalation(state: AgentState) -> dict[str, Any]:
         }
 
 
+@observe_node("hitl_review")
 def hitl_review(state: AgentState) -> dict[str, Any]:
     """Human-in-the-loop interrupt — pauses for manager review (CM-32 gate).
 
