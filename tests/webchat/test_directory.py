@@ -67,12 +67,27 @@ def test_placeholder_endpoint_treated_as_unset(monkeypatch: pytest.MonkeyPatch) 
 
 
 class _FakeContainer:
-    """Emulates the ``tenants`` container: filters rows by the @mobile param."""
+    """Emulates the ``tenants`` container: filters rows by the @mobile param.
+
+    The container is partitioned by ``/id``, so a mobile lookup is
+    cross-partition. The sync azure-cosmos SDK raises ``BadRequest`` unless
+    ``enable_cross_partition_query=True`` is passed — model that exactly so this
+    fake is a regression guard against dropping the flag (the real-world bug
+    found in prod: the query silently failed and login fell back to unknown).
+    """
 
     def __init__(self, rows: list[dict[str, Any]]) -> None:
         self._rows = rows
 
-    def query_items(self, *, query: str, parameters: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def query_items(
+        self,
+        *,
+        query: str,
+        parameters: list[dict[str, Any]],
+        enable_cross_partition_query: bool = False,
+    ) -> list[dict[str, Any]]:
+        if not enable_cross_partition_query:
+            raise RuntimeError("Cross partition query is required but disabled")
         wanted = parameters[0]["value"]
         return [r for r in self._rows if r.get("mobile") == wanted]
 

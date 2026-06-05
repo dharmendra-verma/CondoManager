@@ -100,10 +100,12 @@ class CosmosTenantDirectory:
     def lookup(self, mobile: str) -> TestTenant | None:
         """Return the tenant whose ``mobile`` matches, or ``None``.
 
-        The ``tenants`` container is partitioned by ``/id``, so a mobile lookup
-        is cross-partition (automatic in azure-cosmos when ``partition_key`` is
-        omitted). A query failure degrades to ``None`` (→ hardcoded fallback /
-        ``unknown_number``) rather than 500-ing the login.
+        The ``tenants`` container is partitioned by ``/id``, so a lookup by
+        ``mobile`` spans partitions. The sync azure-cosmos SDK does NOT enable
+        that implicitly (unlike the JS SDK the admin API uses) — without
+        ``enable_cross_partition_query=True`` it raises ``BadRequest``, which we
+        would swallow into a silent ``unknown_number``. A genuine query failure
+        still degrades to ``None`` (→ hardcoded fallback) rather than 500-ing.
         """
         key = normalize_mobile(mobile)
         try:
@@ -111,6 +113,7 @@ class CosmosTenantDirectory:
                 self._container.query_items(
                     query="SELECT * FROM c WHERE c.mobile = @mobile",
                     parameters=[{"name": "@mobile", "value": key}],
+                    enable_cross_partition_query=True,
                 )
             )
         except Exception as e:  # noqa: BLE001 -- a lookup failure must not 500 the login
