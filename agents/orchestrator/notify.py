@@ -34,6 +34,15 @@ SECRET_PLACEHOLDER = "REPLACE-ME"
 #: the graph step; failure falls through to a logged miss.
 _TIMEOUT_S = 5.0
 
+#: Default SMTP submission port (STARTTLS).
+_SMTP_PORT = 587
+
+
+def _env(name: str) -> str:
+    """Configured env var, or ``""`` when unset / blank / the CM-18 placeholder."""
+    val = os.environ.get(name, "").strip()
+    return "" if val == SECRET_PLACEHOLDER else val
+
 
 @runtime_checkable
 class ManagerNotifier(Protocol):
@@ -83,13 +92,93 @@ class SlackWebhookNotifier:
         return True
 
 
-def get_manager_notifier() -> ManagerNotifier:
-    """Slack when ``SLACK_WEBHOOK_URL`` is a real value, else ``LogNotifier``.
+class SmtpManagerNotifier:
+    """Emails the manager alert via ``smtplib`` (STARTTLS) — CM-50.
 
-    Same env-gating posture as the other CM selectors — the CM-18 ``REPLACE-ME``
-    placeholder and unset both fall back to logging, so dev/CI never POST.
+    Same best-effort, never-raise contract as :class:`SlackWebhookNotifier`:
+    a flaky mail server is logged and reported via the return value.
     """
-    url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
-    if url and url != SECRET_PLACEHOLDER:
-        return SlackWebhookNotifier(url)
-    return LogNotifier()
+
+    def __init__(
+        self,
+        host: str,
+        user: str,
+        password: str,
+        recipient: str,
+        *,
+        port: int = _SMTP_PORT,
+        sender: str | None = None,
+    ) -> None:
+        self._host = host
+        self._user = user
+        self._password = password
+        self._recipient = recipient
+        self._port = port
+        self._sender = sender or user or "no-reply@condomanager.local"
+
+    def notify(self, record: EscalationRecord) -> bool:
+        import smtplib  # noqa: PLC0415  (lazy; LogNotifier path skips the import)
+        from email.message import EmailMessage  # noqa: PLC0415
+
+        msg = EmailMessage()
+        msg["From"] = self._sender
+        msg["To"] = self._recipient
+        msg["Subject"] = f"[CondoManager] Escalation {record.record_id}"
+        msg.set_content(record.manager_alert)
+        try:
+            with smtplib.SMTP(self._host, self._port, timeout=_TIMEOUT_S) as smtp:
+                smtp.starttls()
+                if self._user and self._password:
+                    smtp.login(self._user, self._password)
+                smtp.send_message(msg)
+        except Exception as e:  # noqa: BLE001  (mail failure must not break the graph)
+            _log.warning(
+                "SMTP manager-alert send failed for %s: %s", record.record_id, e
+            )
+            return False
+        return True
+
+
+class _MultiNotifier:
+    """Fans the alert out to several notifiers. Delivered if ANY succeed.
+
+    Attempts every notifier (a Slack outage must not suppress the email);
+    never raises — each delegate already swallows its own failures.
+    """
+
+    def __init__(self, notifiers: list[ManagerNotifier]) -> None:
+        self._notifiers = notifiers
+
+    def notify(self, record: EscalationRecord) -> bool:
+        results = [n.notify(record) for n in self._notifiers]
+        return any(results)
+
+
+def get_manager_notifier() -> ManagerNotifier:
+    """Slack and/or Email when configured, else ``LogNotifier``.
+
+    * Slack — enabled by ``SLACK_WEBHOOK_URL``.
+    * Email — enabled by ``SMTP_HOST`` + ``MANAGER_ALERT_EMAIL`` (optional
+      ``SMTP_USER`` / ``SMTP_PASS``).
+
+    When both are set the alert fans out to both (CM-50). Same env-gating posture
+    as the other CM selectors — the CM-18 ``REPLACE-ME`` placeholder and unset
+    both count as off, so dev / CI never deliver.
+    """
+    notifiers: list[ManagerNotifier] = []
+    url = _env("SLACK_WEBHOOK_URL")
+    if url:
+        notifiers.append(SlackWebhookNotifier(url))
+    smtp_host = _env("SMTP_HOST")
+    recipient = _env("MANAGER_ALERT_EMAIL")
+    if smtp_host and recipient:
+        notifiers.append(
+            SmtpManagerNotifier(
+                smtp_host, _env("SMTP_USER"), _env("SMTP_PASS"), recipient
+            )
+        )
+    if not notifiers:
+        return LogNotifier()
+    if len(notifiers) == 1:
+        return notifiers[0]
+    return _MultiNotifier(notifiers)
