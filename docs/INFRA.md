@@ -602,20 +602,29 @@ distributions per LangGraph node, hallucination signals).
 
 | Env var                 | Source                                       | Default                          |
 |-------------------------|----------------------------------------------|----------------------------------|
-| `LANGFUSE_PUBLIC_KEY`   | KV secret `langfuse-public-key` via CM-26    | unset → Langfuse disabled        |
-| `LANGFUSE_SECRET_KEY`   | KV secret `langfuse-secret-key` via CM-26    | unset → Langfuse disabled        |
-| `LANGFUSE_HOST`         | literal in Bicep (no secret)                 | `https://cloud.langfuse.com`     |
+| `LANGFUSE_PUBLIC_KEY`   | KV secret `langfuse-public-key` via Container App `secretRef` (CM-65) | unset → Langfuse disabled        |
+| `LANGFUSE_SECRET_KEY`   | KV secret `langfuse-secret-key` via Container App `secretRef` (CM-65) | unset → Langfuse disabled        |
+| `LANGFUSE_HOST`         | `langfuseHost` param in container-app.bicep (plaintext) | `https://cloud.langfuse.com`     |
 | `LANGFUSE_ENABLED`      | optional override                            | unset (use key presence)         |
 
 `agents/observability/langfuse_export.py` reads these at call time, so
 operators can toggle the killswitch by patching the Container App
 revision without redeploying the image.
 
+**Wiring (CM-65).** `main.bicep` sets `langfuseEnabled = env == 'prod'` — the mirror
+of `langsmithEnabled = env == 'dev'`; the two tracing backends are split by env so
+they never double-pay / emit twice per call. When enabled, `container-app.bicep`
+mounts `langfuse-public-key` / `langfuse-secret-key` from KV via `secretRef`
+(resolved by the shared MI) and sets `LANGFUSE_HOST`. So once the two KV secrets
+below hold real values, the **next prod deploy** (or a revision restart) makes the
+CM-63-decorated pipeline emit to Langfuse — no code change.
+
 ### One-time operator setup
 
-These steps are out-of-band — the Dev Agent cannot do them. Run after the
-PR for CM-24 merges AND after CM-43's `User Access Administrator` grant
-has been applied (else step 3 errors with `roleAssignments/write`):
+These steps are out-of-band — the Dev Agent cannot do them. The KV→container
+`secretRef` wiring is already in place (CM-65); these populate the real keys
+and switch prod emission on (the caller needs data-plane `Key Vault Secrets
+Officer` on the vault):
 
 1. **Sign up + create project.** [cloud.langfuse.com](https://cloud.langfuse.com) →
    create the `condomanager-prod` project on the Hobby tier (free).
@@ -628,6 +637,12 @@ has been applied (else step 3 errors with `roleAssignments/write`):
        --name langfuse-public-key --value <pk_…>
    az keyvault secret set --vault-name kv-condomanager-prod \
        --name langfuse-secret-key --value <sk_…>
+   ```
+   Then **redeploy prod** (next `deploy.yml` run) or restart the Container App
+   revision so the `secretRef` picks up the new values:
+   ```bash
+   az containerapp revision restart --name ca-hello-condomanager-prod \
+       --resource-group rg-condomanager
    ```
 4. **Build three per-agent dashboards** in the Langfuse UI under Dashboards →
    New Dashboard. All three group by `agent_name` (the `@observe_node`
@@ -652,12 +667,13 @@ has been applied (else step 3 errors with `roleAssignments/write`):
    `metric.*` `customEvents`. Langfuse is the LLM-cost/quality overlay; the
    workbook is the engineering view — they read the same emission contract.
 
-### Wiring future LangGraph nodes
+### LangGraph node wiring (done — CM-63)
 
-When orchestrator nodes land (CM-28+), decorate each "key" node with
-`@observe_node("triage.classify")` etc. so the dashboard's per-agent
-breakdown shows real data. The decorator is a transparent no-op
-locally (Langfuse keys unset) — no test changes required.
+The orchestrator nodes are decorated with `@observe_node(...)` and the
+web-chat entrypoint calls `init_langfuse()` at startup (CM-63), so the
+per-agent dashboards show real data once the prod keys above are seeded
+and emission is on (CM-65). The decorator is a transparent no-op locally
+(Langfuse keys unset) — no test changes required.
 
 ## Google Drive → Cosmos vector sync (CM-34)
 

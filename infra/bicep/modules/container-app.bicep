@@ -25,13 +25,16 @@
 // to the Azure Monitor exporter. Empty string omits both `secrets[]` and the
 // env var — back-compat for callers that don't wire App Insights.
 //
-// CM-24: Langfuse production keys (`langfuse-public-key`, `langfuse-secret-key`)
-// will follow the same KV→secretRef pattern as APPLICATIONINSIGHTS_CONNECTION_STRING
-// once CM-26 wires the chain. Future env vars are LANGFUSE_PUBLIC_KEY,
-// LANGFUSE_SECRET_KEY, and LANGFUSE_HOST (literal `https://cloud.langfuse.com`).
-// Until then, `agents/observability/langfuse_export.py` reads them from
-// `os.environ`; both keys unset (the default) means Langfuse stays disabled
-// — see is_langfuse_enabled() in that module.
+// CM-65: Langfuse production keys (`langfuse-public-key`, `langfuse-secret-key`)
+// follow the same KV→secretRef pattern as APPLICATIONINSIGHTS_CONNECTION_STRING.
+// When `langfusePublicKeyKvSecretUri` + `langfuseSecretKeyKvSecretUri` are
+// supplied (alongside the MI), the platform pulls both keys from KV at revision
+// start and exposes them as LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY, plus the
+// plaintext LANGFUSE_HOST. `agents/observability/langfuse_export.py` reads them
+// from `os.environ`; both keys unset (the default) means Langfuse stays disabled
+// — see is_langfuse_enabled() in that module. main.bicep enables this in prod
+// (the tracing-backend split: LangSmith=dev, Langfuse=prod — never both, to
+// avoid double-paying and emitting twice per call).
 
 targetScope = 'resourceGroup'
 
@@ -83,6 +86,15 @@ param langsmithProjectName string = ''
 @description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU.')
 param langsmithEndpoint string = 'https://api.smith.langchain.com'
 
+@description('Key Vault secret URI for the Langfuse PUBLIC key (CM-65). Empty string (default) omits the Langfuse env vars. Requires userAssignedIdentityId and a non-empty langfuseSecretKeyKvSecretUri — both keys are needed for is_langfuse_enabled().')
+param langfusePublicKeyKvSecretUri string = ''
+
+@description('Key Vault secret URI for the Langfuse SECRET key (CM-65). Empty string (default) omits the Langfuse env vars. Requires userAssignedIdentityId and a non-empty langfusePublicKeyKvSecretUri.')
+param langfuseSecretKeyKvSecretUri string = ''
+
+@description('Langfuse host routed via LANGFUSE_HOST (CM-65). Plaintext (not a secret); the Cloud default. Override for self-hosted/EU Langfuse.')
+param langfuseHost string = 'https://cloud.langfuse.com'
+
 @description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
 param registryServer string = ''
 
@@ -111,6 +123,10 @@ var hasAppInsights = hasIdentity && !empty(appInsightsKvSecretUri)
 // (we'd ship a key with no project routing); fail closed rather than send to
 // LangSmith's "default" project.
 var hasLangsmith = hasIdentity && !empty(langsmithKvSecretUri) && !empty(langsmithProjectName)
+// CM-65: Langfuse needs BOTH keys (public + secret) plus the identity to resolve
+// the secretRefs. Requiring both URIs fails closed — a half-config never
+// half-mounts (is_langfuse_enabled() needs both keys present anyway).
+var hasLangfuse = hasIdentity && !empty(langfusePublicKeyKvSecretUri) && !empty(langfuseSecretKeyKvSecretUri)
 // A private ACR pull needs the MI: Container Apps resolves the registry
 // `identity` against AcrPull at revision start. Without an identity we can only
 // pull public images (the hello-world default), so omit the registries block.
@@ -168,6 +184,19 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             identity: userAssignedIdentityId
             keyVaultUrl: langsmithKvSecretUri
           }
+        ] : [],
+        // CM-65: Langfuse public + secret keys, both resolved via the MI.
+        hasLangfuse ? [
+          {
+            name: 'langfuse-public-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: langfusePublicKeyKvSecretUri
+          }
+          {
+            name: 'langfuse-secret-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: langfuseSecretKeyKvSecretUri
+          }
         ] : []
       )
     }
@@ -215,6 +244,23 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'LANGCHAIN_ENDPOINT'
                 value: langsmithEndpoint
+              }
+            ] : [],
+            // CM-65 Langfuse block — both keys via secretRef; host is plaintext.
+            // CM-63 already calls init_langfuse() at startup; these env vars are
+            // what flip is_langfuse_enabled() true on the running container.
+            hasLangfuse ? [
+              {
+                name: 'LANGFUSE_PUBLIC_KEY'
+                secretRef: 'langfuse-public-key'
+              }
+              {
+                name: 'LANGFUSE_SECRET_KEY'
+                secretRef: 'langfuse-secret-key'
+              }
+              {
+                name: 'LANGFUSE_HOST'
+                value: langfuseHost
               }
             ] : [],
             // CM-59: enable the CM-55 web-chat channel in prod. The flag module
