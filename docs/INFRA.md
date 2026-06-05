@@ -817,11 +817,21 @@ vendor. First portal story; lives in `portal/`.
 ### One-time operator setup (out-of-band)
 
 1. **Deploy the infra** (`main.bicep`) — provisions `swa-condomanager-<env>`.
-2. **Set the Cosmos app setting** on the SWA (from KV `cosmos-connection-string`):
+2. **Set the Cosmos app setting** on the SWA from KV `cosmos-connection-string`:
    ```bash
-   az staticwebapp appsettings set --name swa-condomanager-dev \
-       --setting-names COSMOS_CONNECTION_STRING="<from kv>"
+   bash infra/scripts/seed-swa-cosmos-setting.sh <env>   # dev | prod
    ```
+   The script reads the real connection string from `kv-condomanager-<env>` and
+   sets `COSMOS_CONNECTION_STRING` on `swa-condomanager-<env>`. It is **idempotent**
+   (no-op when the setting already matches) and **fail-closed** — it refuses to push
+   when the KV secret is still `REPLACE-ME`/empty, so the placeholder can never be
+   promoted into the live setting (which is what silently reverts the API to the
+   in-memory store — see §below / CM-61). Seed the real KV value first if it errors.
+
+   > ⚠️ **Recreating or redeploying the Static Web App resets its app settings.**
+   > `COSMOS_CONNECTION_STRING` is **not** managed by Bicep (SWA Free can't use a KV
+   > reference — no Managed Identity), so re-run this script after any SWA
+   > recreate/redeploy or persistence silently falls back to the in-memory store.
 3. **Enable CI deploy:** set repo variable `PORTAL_DEPLOY_ENABLED=true`. Until
    then the `deploy-portal-dev` job is skipped (keeps `main` green pre-setup).
 

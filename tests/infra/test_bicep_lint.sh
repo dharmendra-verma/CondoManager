@@ -1556,6 +1556,65 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-64 — KV → SWA COSMOS_CONNECTION_STRING seed script (repeatable + fail-closed)
+# ---------------------------------------------------------------------------
+
+SWA_COSMOS_SEED="$ROOT/infra/scripts/seed-swa-cosmos-setting.sh"
+SWA_COSMOS_TEST="$ROOT/tests/infra/test_seed_swa_cosmos.sh"
+
+echo "▶  Verifying seed-swa-cosmos-setting.sh exists and is non-empty (CM-64)"
+if [ -s "$SWA_COSMOS_SEED" ]; then
+  echo "   ✓ seed-swa-cosmos-setting.sh present"
+else
+  echo "   ✗ infra/scripts/seed-swa-cosmos-setting.sh missing or empty"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-swa-cosmos-setting.sh uses 'set -euo pipefail' + parses (CM-64)"
+if grep -Fq "set -euo pipefail" "$SWA_COSMOS_SEED" && bash -n "$SWA_COSMOS_SEED" 2>/dev/null; then
+  echo "   ✓ strict mode enabled and script parses"
+else
+  echo "   ✗ seed-swa-cosmos-setting.sh missing 'set -euo pipefail' or has a syntax error"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-swa-cosmos-setting.sh reads KV secret cosmos-connection-string (CM-64)"
+if grep -Fq "keyvault secret show" "$SWA_COSMOS_SEED" \
+   && grep -Fq "cosmos-connection-string" "$SWA_COSMOS_SEED"; then
+  echo "   ✓ reads cosmos-connection-string from Key Vault"
+else
+  echo "   ✗ seed-swa-cosmos-setting.sh does NOT read the KV secret cosmos-connection-string"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-swa-cosmos-setting.sh writes the SWA COSMOS_CONNECTION_STRING setting (CM-64)"
+if grep -Fq "staticwebapp appsettings set" "$SWA_COSMOS_SEED" \
+   && grep -Fq "COSMOS_CONNECTION_STRING" "$SWA_COSMOS_SEED"; then
+  echo "   ✓ sets COSMOS_CONNECTION_STRING via az staticwebapp appsettings set"
+else
+  echo "   ✗ seed-swa-cosmos-setting.sh does NOT set COSMOS_CONNECTION_STRING on the SWA"
+  FAIL=1
+fi
+
+echo "▶  Verifying seed-swa-cosmos-setting.sh is fail-closed on the REPLACE-ME placeholder (CM-64)"
+# The whole point of the story: the placeholder must never be promoted into the
+# live app setting (that would re-trigger the silent in-memory fallback CM-61 fixed).
+if grep -Fq "REPLACE-ME" "$SWA_COSMOS_SEED"; then
+  echo "   ✓ references the REPLACE-ME placeholder guard"
+else
+  echo "   ✗ seed-swa-cosmos-setting.sh has no REPLACE-ME fail-closed guard"
+  FAIL=1
+fi
+
+echo "▶  Verifying the behavioural test test_seed_swa_cosmos.sh exists + parses (CM-64)"
+if [ -s "$SWA_COSMOS_TEST" ] && bash -n "$SWA_COSMOS_TEST" 2>/dev/null; then
+  echo "   ✓ test_seed_swa_cosmos.sh present and syntactically valid"
+else
+  echo "   ✗ tests/infra/test_seed_swa_cosmos.sh missing or has a syntax error"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"

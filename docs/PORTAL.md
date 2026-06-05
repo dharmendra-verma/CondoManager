@@ -134,6 +134,13 @@ fails fast with a clear error before it's configured.
 > `REPLACE-ME`, so writes silently went to an ephemeral in-memory store and ticket
 > lookups 502'd, until it was seeded with the real Cosmos connection string — §6(c).
 
+> **Wiring it (CM-64).** Push the KV value into the SWA app setting with
+> `bash infra/scripts/seed-swa-cosmos-setting.sh <env>` — idempotent and
+> fail-closed (it refuses to promote the `REPLACE-ME` placeholder). Because the
+> setting isn't Bicep-managed (SWA Free has no Managed Identity for a KV
+> reference), **re-run it after any SWA recreate/redeploy** or persistence
+> silently reverts to the in-memory store.
+
 > **Upgrade path:** when the SWA moves to Standard, swap to
 > `DefaultAzureCredential` + the CM-18 User-Assigned MI and drop the connection
 > string. The query in `cosmos.ts` doesn't change.

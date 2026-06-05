@@ -735,14 +735,14 @@ are operator-set app settings:
    part of CM-61 (this also un-broke `/api/ticket?code=` lookups).
 
 ```bash
-# Set the two app settings on the prod SWA (operator action):
+# Cosmos connection string: KV -> SWA app setting (idempotent, fail-closed).
+# Re-run after any SWA recreate/redeploy — it's not Bicep-managed (CM-64).
+bash infra/scripts/seed-swa-cosmos-setting.sh prod
+
+# Enable the admin handlers (fail-closed without it):
 az staticwebapp appsettings set \
   --name swa-condomanager-prod \
-  --setting-names \
-    TENANT_ADMIN_ENABLED=1 \
-    COSMOS_CONNECTION_STRING="$(az keyvault secret show \
-      --vault-name kv-condomanager-prod \
-      --name cosmos-connection-string --query value -o tsv)"
+  --setting-names TENANT_ADMIN_ENABLED=1
 
 # Verify the route is registered AND enabled (expect a JSON array, HTTP 200):
 curl -s -i "https://<SWA_URL>/api/tenants" | head -n 5
