@@ -1615,6 +1615,62 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-65 — Langfuse prod keys wired onto the Container App (KV → secretRef)
+# ---------------------------------------------------------------------------
+
+echo "▶  Verifying container-app.bicep accepts the three Langfuse params (CM-65)"
+if grep -Eq "param[[:space:]]+langfusePublicKeyKvSecretUri[[:space:]]+string" "$CA_BICEP" \
+   && grep -Eq "param[[:space:]]+langfuseSecretKeyKvSecretUri[[:space:]]+string" "$CA_BICEP" \
+   && grep -Eq "param[[:space:]]+langfuseHost[[:space:]]+string" "$CA_BICEP"; then
+  echo "   ✓ langfusePublicKeyKvSecretUri + langfuseSecretKeyKvSecretUri + langfuseHost present"
+else
+  echo "   ✗ container-app.bicep missing one or more Langfuse params"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep declares the Langfuse env vars (2x secretRef + host) (CM-65)"
+if grep -Fq "name: 'LANGFUSE_PUBLIC_KEY'" "$CA_BICEP" \
+   && grep -Fq "secretRef: 'langfuse-public-key'" "$CA_BICEP" \
+   && grep -Fq "name: 'LANGFUSE_SECRET_KEY'" "$CA_BICEP" \
+   && grep -Fq "secretRef: 'langfuse-secret-key'" "$CA_BICEP" \
+   && grep -Fq "name: 'LANGFUSE_HOST'" "$CA_BICEP"; then
+  echo "   ✓ LANGFUSE_PUBLIC_KEY/SECRET_KEY via secretRef + LANGFUSE_HOST present"
+else
+  echo "   ✗ container-app.bicep does NOT wire the Langfuse env vars via secretRef"
+  FAIL=1
+fi
+
+echo "▶  Verifying container-app.bicep gates Langfuse on a hasLangfuse var requiring both keys (CM-65)"
+if grep -Eq "var[[:space:]]+hasLangfuse[[:space:]]*=" "$CA_BICEP" \
+   && grep -Fq "!empty(langfusePublicKeyKvSecretUri)" "$CA_BICEP" \
+   && grep -Fq "!empty(langfuseSecretKeyKvSecretUri)" "$CA_BICEP"; then
+  echo "   ✓ hasLangfuse gate requires both key URIs (fail-closed, no half-mount)"
+else
+  echo "   ✗ container-app.bicep missing the hasLangfuse gate or its both-keys guard"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep wires langfuseEnabled with a prod-default (CM-65)"
+# Mirror image of langsmithEnabled = env == 'dev'. The prod-default keeps the
+# LangSmith=dev / Langfuse=prod split so the two backends never double-emit.
+if grep -Eq "param[[:space:]]+langfuseEnabled[[:space:]]+bool[[:space:]]*=[[:space:]]*env[[:space:]]*==[[:space:]]*'prod'" \
+   "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langfuseEnabled defaults to prod-only"
+else
+  echo "   ✗ main.bicep langfuseEnabled param missing or default isn't 'env == prod'"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep computes the two Langfuse KV secret URIs (CM-65)"
+if grep -Fq "secrets/langfuse-public-key" "$BICEP_DIR/main.bicep" \
+   && grep -Fq "secrets/langfuse-secret-key" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langfuse-public-key + langfuse-secret-key KV URIs present"
+else
+  echo "   ✗ main.bicep doesn't compute the Langfuse KV secret URIs"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"

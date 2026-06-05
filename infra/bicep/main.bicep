@@ -50,6 +50,9 @@ param langsmithEnabled bool = env == 'dev'
 @description('LangSmith ingestion endpoint. US default; override to https://eu.api.smith.langchain.com for EU customers.')
 param langsmithEndpoint string = 'https://api.smith.langchain.com'
 
+@description('Enable Langfuse LLM observations on the Container App (CM-65). Mirror of langsmithEnabled: defaults to enabled in PROD, disabled in dev — the tracing-backend split (LangSmith=dev, Langfuse=prod). Running both in one env would double-pay and emit twice per call. Requires the real langfuse-public-key / langfuse-secret-key seeded into KV.')
+param langfuseEnabled bool = env == 'prod'
+
 @description('Monthly Azure spend budget in USD for the resource group (CM-26). Triggers alerts at 50/80/100% Actual. Dev defaults to 100, prod to 500 — operator tunes after the first month of real usage data lands.')
 @minValue(1)
 param alertMonthlyBudgetUsd int = env == 'dev' ? 100 : 500
@@ -241,6 +244,9 @@ module keyvault './modules/keyvault.bicep' = {
 // `https://<kv-name>.vault.azure.net/secrets/<secret-name>` form.
 var appInsightsKvSecretUri = '${keyvault.outputs.vaultUri}secrets/app-insights-connection-string'
 var langsmithKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langsmith-api-key'
+// CM-65: Langfuse public + secret keys, resolved by the MI at revision start.
+var langfusePublicKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langfuse-public-key'
+var langfuseSecretKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langfuse-secret-key'
 
 // CM-23: project name routed via LANGCHAIN_PROJECT. One LangSmith project per
 // env so traces don't bleed between dev iteration and any prod opt-in.
@@ -271,6 +277,10 @@ module containerApp './modules/container-app.bicep' = {
     langsmithKvSecretUri: langsmithEnabled ? langsmithKvSecretUri : ''
     langsmithProjectName: langsmithEnabled ? langsmithProject : ''
     langsmithEndpoint: langsmithEndpoint
+    // CM-65: Langfuse keys (prod by default). Both URIs passed together or not
+    // at all, so the module's hasLangfuse gate never half-mounts.
+    langfusePublicKeyKvSecretUri: langfuseEnabled ? langfusePublicKeyKvSecretUri : ''
+    langfuseSecretKeyKvSecretUri: langfuseEnabled ? langfuseSecretKeyKvSecretUri : ''
     // CM-59: real agent image (or the hello-world default) + its coupled port,
     // private-pull registry, and channel flag.
     image: containerImage
@@ -472,6 +482,10 @@ output alertRuleNames object = {
 // hard-coding the convention.
 output langsmithProject string = langsmithEnabled ? langsmithProject : ''
 output langsmithEnabled bool = langsmithEnabled
+
+// CM-65 output — lets tooling/operators see which env emits to Langfuse without
+// re-deriving the env==prod convention.
+output langfuseEnabled bool = langfuseEnabled
 
 // CM-34 outputs — Function App identity for the post-deploy `func publish`
 // step + the gdrive-sync smoke test discovery. Empty string when the app is not
