@@ -19,6 +19,8 @@ The vite dev server (portal, :5173) calls these endpoints cross-origin during
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -26,11 +28,39 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from agents.channels.base import NormalizationError
+from agents.observability import configure_otel
+from agents.observability.langfuse_export import init_langfuse
 
 from .flag import is_webchat_enabled
 from .service import UnknownTenantError, handle_message, resolve_tenant
 
-app = FastAPI(title="condomanager-webchat-test", docs_url=None, redoc_url=None)
+# deployment.environment resource attribute on emitted spans. This is the prod
+# inbound entry point (CM-59); override DEPLOY_ENV locally if desired.
+_DEPLOY_ENV = os.environ.get("DEPLOY_ENV", "prod")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Initialize observability once, when the server starts (CM-63).
+
+    Deliberately at startup (not import time) so unit tests that merely
+    construct ``TestClient(app)`` without entering its context manager stay
+    side-effect-free. Every call here no-ops gracefully when its backend is
+    unconfigured: ``configure_otel`` falls back to the console exporter with no
+    OTLP endpoint, and ``init_langfuse`` returns ``None`` when the Langfuse keys
+    are unset/placeholder. This is what actually activates the CM-24 Langfuse
+    path + CM-22 App Insights spans on the live web-chat pipeline; without it the
+    ``@observe_node`` decorators and ``langgraph_node_span`` calls have no
+    initialized backend to emit to.
+    """
+    configure_otel(service_name="condomanager-webchat", environment=_DEPLOY_ENV, app=app)
+    init_langfuse()
+    yield
+
+
+app = FastAPI(
+    title="condomanager-webchat-test", docs_url=None, redoc_url=None, lifespan=_lifespan
+)
 
 # The SPA calls these endpoints cross-origin. In local dev that's the vite dev
 # server (localhost:5173); in prod the portal is served from the Static Web App,

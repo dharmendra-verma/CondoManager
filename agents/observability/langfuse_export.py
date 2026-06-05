@@ -137,8 +137,14 @@ def observe_node(name: str | None = None) -> Callable[[F], F]:
     """
 
     def decorator(fn: F) -> F:
+        obs_name = name or fn.__name__
+
         if not is_langfuse_enabled():
-            return fn  # transparent pass-through
+            # Transparent pass-through, but still tag the function with its
+            # intended observation name so the wiring is assertable in tests
+            # regardless of whether Langfuse is enabled at decoration time.
+            fn.__langfuse_observed__ = obs_name  # type: ignore[attr-defined]
+            return fn
 
         # Lazy imports — only loaded on the enabled path.
         from langfuse.decorators import langfuse_context, observe  # noqa: PLC0415
@@ -148,7 +154,7 @@ def observe_node(name: str | None = None) -> Callable[[F], F]:
             get_request_id,
         )
 
-        observed = observe(name=name or fn.__name__)(fn)
+        observed = observe(name=obs_name)(fn)
 
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -162,6 +168,7 @@ def observe_node(name: str | None = None) -> Callable[[F], F]:
                 )
             return observed(*args, **kwargs)
 
+        wrapper.__langfuse_observed__ = obs_name  # type: ignore[attr-defined]
         return wrapper  # type: ignore[return-value]
 
     return decorator
