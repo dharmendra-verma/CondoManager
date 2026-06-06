@@ -36,6 +36,13 @@ on:
       - 'infra/**'
       - 'portal/**'
       - '.github/workflows/deploy.yml'
+      # CM-70: the agent runtime image is built inside this workflow (az acr
+      # build) from agents/ + requirements-lock.txt (per infra/docker/agent/
+      # Dockerfile, itself under infra/**). Without these paths an agent-code-
+      # only change merges to main but never rebuilds the image or deploys —
+      # the Container App keeps running the previous image.
+      - 'agents/**'
+      - 'requirements-lock.txt'
   release:
     types: [ published ]
   workflow_dispatch:
