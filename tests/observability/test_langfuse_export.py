@@ -145,3 +145,53 @@ def test_init_does_not_read_attrs_off_client(monkeypatch: pytest.MonkeyPatch) ->
     # Host was resolved from the env and handed to the ctor (not read back).
     _, kwargs = fake_module.Langfuse.call_args
     assert kwargs["host"] == "https://us.cloud.langfuse.com"
+
+
+def test_flush_is_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disabled (dev/tests): flush must do nothing and import no langfuse.*."""
+    for k in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_ENABLED"):
+        monkeypatch.delenv(k, raising=False)
+    # If this tried to import langfuse.decorators it'd still be fine, but the
+    # contract is a pure no-op — it simply must not raise.
+    lfe.flush_langfuse()
+
+
+def test_flush_calls_langfuse_context_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Enabled (CM-69): flush delegates to ``langfuse_context.flush()``.
+
+    Required for scale-to-zero (Container Apps minReplicas=0), where the SDK's
+    background consumer wouldn't otherwise flush before the container stops.
+    """
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk_real")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk_real")
+    monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
+
+    fake_ctx = MagicMock()
+    fake_decorators = MagicMock(langfuse_context=fake_ctx)
+    with patch.dict(
+        "sys.modules",
+        {"langfuse": MagicMock(), "langfuse.decorators": fake_decorators},
+    ):
+        lfe.flush_langfuse()
+
+    fake_ctx.flush.assert_called_once_with()
+
+
+def test_flush_swallows_exceptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A telemetry flush failure must NEVER propagate into the request path."""
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk_real")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk_real")
+    monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
+
+    fake_ctx = MagicMock()
+    fake_ctx.flush.side_effect = RuntimeError("langfuse backend unreachable")
+    fake_decorators = MagicMock(langfuse_context=fake_ctx)
+    with patch.dict(
+        "sys.modules",
+        {"langfuse": MagicMock(), "langfuse.decorators": fake_decorators},
+    ):
+        lfe.flush_langfuse()  # must NOT raise
+
+    fake_ctx.flush.assert_called_once_with()

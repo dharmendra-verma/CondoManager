@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from agents.channels.base import NormalizationError
 from agents.observability import configure_otel
-from agents.observability.langfuse_export import init_langfuse
+from agents.observability.langfuse_export import flush_langfuse, init_langfuse
 
 from .flag import is_webchat_enabled
 from .service import UnknownTenantError, handle_message, resolve_tenant
@@ -55,7 +55,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     configure_otel(service_name="condomanager-webchat", environment=_DEPLOY_ENV, app=app)
     init_langfuse()
-    yield
+    try:
+        yield
+    finally:
+        # Belt-and-suspenders alongside the per-request flush: drain any buffered
+        # Langfuse observations before the worker stops, for scale-to-zero
+        # shutdowns where the SDK's background consumer wouldn't run (CM-69).
+        flush_langfuse()
 
 
 app = FastAPI(
@@ -129,3 +135,7 @@ async def message(req: MessageRequest) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="unknown_number") from None
     except NormalizationError as exc:
         raise HTTPException(status_code=400, detail="normalize_failed") from exc
+    finally:
+        # Force-send this message's trace before the response returns, so a
+        # scale-to-zero teardown right after the request can't drop it (CM-69).
+        flush_langfuse()
