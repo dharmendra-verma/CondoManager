@@ -124,13 +124,25 @@ jobs:
 
       - name: az deployment group create (env=prod)
         run: |
+          # CM-72: gdrive-sync (document ingestion) Function App is gated on the
+          # GDRIVE_SYNC_DEPLOY_ENABLED repo variable. main.bicep defaults
+          # deployGdriveSync to dev-only (CM-58 App Service Plan VM quota); we
+          # override it to true for prod ONLY once the operator has flipped the
+          # variable (quota confirmed, embedding deployment + KV secrets seeded).
+          # gdriveFolderId / gdriveTenantId / azureOpenAiEndpoint come from repo
+          # variables so operator config carries no code change; unset → bicep
+          # defaults (the function then skips cleanly until fully configured).
           az deployment group create \
             --resource-group rg-condomanager \
             --name cm-rg-prod-${{ github.run_number }} \
             --template-file infra/bicep/main.bicep \
             --parameters infra/bicep/main.parameters.json \
             --parameters env=prod \
-            --parameters agentImage='${{ needs.build-agent-image.outputs.image }}'
+            --parameters agentImage='${{ needs.build-agent-image.outputs.image }}' \
+            --parameters deployGdriveSync=${{ vars.GDRIVE_SYNC_DEPLOY_ENABLED == 'true' && 'true' || 'false' }} \
+            --parameters gdriveFolderId='${{ vars.GDRIVE_FOLDER_ID }}' \
+            --parameters gdriveTenantId='${{ vars.GDRIVE_TENANT_ID || 'default' }}' \
+            --parameters azureOpenAiEndpoint='${{ vars.AZURE_OPENAI_ENDPOINT }}'
 
       - name: Write step summary
         run: |
@@ -199,5 +211,63 @@ jobs:
             echo ""
             echo "* Static Web App: \`swa-condomanager-prod\`"
             echo "* App location: \`portal\` · API: \`portal/api\` · output: \`dist\`"
+            echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-gdrive-sync:
+    name: Publish gdrive-sync (document ingestion) → prod
+    # CM-72: publishes the Function App CODE (Bicep only provisions the resource).
+    # Gated on the same GDRIVE_SYNC_DEPLOY_ENABLED variable that flips the Bicep
+    # deployGdriveSync flag above, so it only runs once the operator has enabled
+    # ingestion (quota confirmed, embedding deployment + KV secrets seeded) — and
+    # `main` stays green before then. `needs: deploy-prod` guarantees the
+    # Function App exists before we publish into it.
+    needs: deploy-prod
+    if: >-
+      vars.GDRIVE_SYNC_DEPLOY_ENABLED == 'true'
+      && (
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        || github.event_name == 'release'
+        || (github.event_name == 'workflow_dispatch' && inputs.target_env == 'prod')
+      )
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Azure Functions Core Tools v4
+        run: npm install -g azure-functions-core-tools@4 --unsafe-perm true
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Stage agents/ package next to the function
+        run: |
+          # The function imports agents.knowledge / agents.observability; bundle
+          # the repo package alongside the app (kept by .funcignore, dev-only
+          # artifacts excluded). See docs/INFRA.md "Deploying the function code".
+          rm -rf functions/gdrive-sync/agents
+          cp -r agents functions/gdrive-sync/agents
+
+      - name: func azure functionapp publish (WEBSITE_RUN_FROM_PACKAGE)
+        working-directory: functions/gdrive-sync
+        run: func azure functionapp publish func-condomanager-prod --python
+
+      - name: Write step summary
+        run: |
+          {
+            echo "### Publish gdrive-sync → prod — success"
+            echo ""
+            echo "* Function App: \`func-condomanager-prod\`"
+            echo "* Code: \`functions/gdrive-sync/\` (+ bundled \`agents/\`)"
             echo "* Triggered by: \`${{ github.event_name }}\` (\`${{ github.ref }}\`)"
           } >> "$GITHUB_STEP_SUMMARY"
