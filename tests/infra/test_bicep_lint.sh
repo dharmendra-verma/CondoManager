@@ -1691,6 +1691,18 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-71 — prod Container App kept warm (minReplicas=1) so async/batched Langfuse
+# trace ingestion completes before a scale-to-zero teardown can drop it.
+# ---------------------------------------------------------------------------
+echo "▶  Verifying main.bicep pins prod Container App to minReplicas=1 (CM-71)"
+if grep -Eq "minReplicas:[[:space:]]*env[[:space:]]*==[[:space:]]*'prod'[[:space:]]*\?[[:space:]]*1[[:space:]]*:[[:space:]]*0" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ minReplicas = (env == 'prod' ? 1 : 0) forwarded to container-app module"
+else
+  echo "   ✗ main.bicep does NOT pin prod minReplicas=1 (warm for reliable Langfuse delivery)"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"
