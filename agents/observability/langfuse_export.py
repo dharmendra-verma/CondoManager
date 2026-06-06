@@ -123,6 +123,29 @@ def init_langfuse() -> Langfuse | None:
     return _client
 
 
+def flush_langfuse() -> None:
+    """Flush buffered Langfuse observations to the backend. No-op when disabled.
+
+    REQUIRED in scale-to-zero deployments (Azure Container Apps
+    ``minReplicas=0``): the ``@observe_node`` decorators enqueue observations
+    to ``langfuse_context``'s background consumer, which only flushes on a
+    timer / at interpreter exit. When the container is torn down right after a
+    request (idle scale-down), that flush never runs and the trace is silently
+    dropped (CM-69). Call this after handling a request — and on shutdown — to
+    force the send before the container can stop.
+
+    Never raises: a telemetry flush must not break the request path.
+    """
+    if not is_langfuse_enabled():
+        return
+    try:
+        from langfuse.decorators import langfuse_context  # noqa: PLC0415
+
+        langfuse_context.flush()
+    except Exception:  # noqa: BLE001 - telemetry must never break the caller
+        _log.warning("Langfuse flush failed", exc_info=True)
+
+
 def observe_node(name: str | None = None) -> Callable[[F], F]:
     """Decorator: wrap ``langfuse.decorators.observe`` when enabled, else no-op.
 
