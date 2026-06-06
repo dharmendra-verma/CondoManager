@@ -86,6 +86,14 @@ dependencies = [
   # (agents/knowledge/chunking.py, reused by CM-33). Already pulled in
   # transitively by `langchain`; declared explicitly so the import is stable.
   "langchain-text-splitters>=0.3,<1",
+  # CM-67: PDF text extraction is a CORE part of the ingestion pipeline — the
+  # policy documents operators hand over are all PDFs, so .pdf parsing is the
+  # primary path, not an opt-in. Promoted from the former optional `[ingest]`
+  # extra (CM-66) so `.pdf` ingestion works out of the box on the CLI and in
+  # the deployed gdrive-sync Function App with no extra install step.
+  # agents/knowledge/local_source.py still lazy-imports it and keeps the
+  # "pypdf absent → skip, don't crash" path as a defensive safety net.
+  "pypdf>=4,<6",
 ]
 
 [project.optional-dependencies]
@@ -114,15 +122,9 @@ gdrive = [
 security = [
   "azure-ai-textanalytics>=5.3,<6",
 ]
-# CM-66: PDF text extraction for the manual local-folder policy ingestion script
-# (infra/scripts/ingest-local-folder.py via agents/knowledge/local_source.py).
-# OPTIONAL, operator-only — pypdf is lazy-imported and only reached when a .pdf
-# is ingested; .txt/.md need nothing here. A .pdf found without this extra is
-# reported as unsupported (skipped), not a crash. Stays out of the base runtime
-# + requirements-lock.txt (same pattern as the gdrive / security extras).
-ingest = [
-  "pypdf>=4,<6",
-]
+# CM-67: the former `ingest` extra (pypdf) was promoted to a core dependency
+# above — PDF parsing is the primary ingestion path, not an opt-in. The extra is
+# intentionally removed so operators don't `pip install` anything before a run.
 
 [tool.setuptools.packages.find]
 include = ["agents*"]
@@ -170,7 +172,8 @@ module = [
   "langchain_text_splitters.*",
   # CM-38: optional `security` extra, not installed in CI (lazy-imported).
   "azure.ai.textanalytics",
-  # CM-66: optional `ingest` extra (pypdf), not installed in CI (lazy-imported).
+  # CM-67: pypdf is now a core dep (was the optional `ingest` extra). It ships
+  # no py.typed marker, so the override is retained to keep it typed as Any.
   "pypdf",
 ]
 ignore_missing_imports = true

@@ -28,8 +28,9 @@ Usage:
     # Additive top-up (do not delete docs missing from the folder):
     python infra/scripts/ingest-local-folder.py --tenant t-acme --folder ./policies --additive
 
-PDF support needs the optional extra:  pip install "condomanager-agents[ingest]"
-(.pdf files are skipped with a warning when pypdf is absent -- never a crash.)
+Supported formats: .txt, .md, .pdf -- all work out of the box (CM-67 made PDF
+text extraction a core dependency; no extra install step). OCR of scanned /
+image-only PDFs is out of scope (text-extractable PDFs only).
 
 Auth: DefaultAzureCredential (env vars -> Managed Identity -> `az login`).
 Exit codes: 0 = success (no failed docs), 1 = bad args / unconfigured / a doc failed.
