@@ -53,6 +53,9 @@ param langsmithEndpoint string = 'https://api.smith.langchain.com'
 @description('Enable Langfuse LLM observations on the Container App (CM-65). Mirror of langsmithEnabled: defaults to enabled in PROD, disabled in dev — the tracing-backend split (LangSmith=dev, Langfuse=prod). Running both in one env would double-pay and emit twice per call. Requires the real langfuse-public-key / langfuse-secret-key seeded into KV.')
 param langfuseEnabled bool = env == 'prod'
 
+@description('Langfuse Cloud host routed to LANGFUSE_HOST on the Container App (CM-68). Defaults to the US region — the CondoManager prod Langfuse project lives in US (note cloud.langfuse.com is the EU region; the two are separate data residencies with non-interchangeable keys). Only consumed when langfuseEnabled (prod); without passing this through, container-app.bicep would fall back to its EU default and a redeploy would silently break prod auth. Override for an EU or self-hosted Langfuse.')
+param langfuseHost string = 'https://us.cloud.langfuse.com'
+
 @description('Monthly Azure spend budget in USD for the resource group (CM-26). Triggers alerts at 50/80/100% Actual. Dev defaults to 100, prod to 500 — operator tunes after the first month of real usage data lands.')
 @minValue(1)
 param alertMonthlyBudgetUsd int = env == 'dev' ? 100 : 500
@@ -281,6 +284,10 @@ module containerApp './modules/container-app.bicep' = {
     // at all, so the module's hasLangfuse gate never half-mounts.
     langfusePublicKeyKvSecretUri: langfuseEnabled ? langfusePublicKeyKvSecretUri : ''
     langfuseSecretKeyKvSecretUri: langfuseEnabled ? langfuseSecretKeyKvSecretUri : ''
+    // CM-68: pin the Langfuse region so a redeploy never reverts LANGFUSE_HOST to
+    // the EU default baked into container-app.bicep. Harmless when disabled (the
+    // module only emits LANGFUSE_HOST inside its hasLangfuse block).
+    langfuseHost: langfuseHost
     // CM-59: real agent image (or the hello-world default) + its coupled port,
     // private-pull registry, and channel flag.
     image: containerImage

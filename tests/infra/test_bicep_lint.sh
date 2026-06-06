@@ -1671,6 +1671,26 @@ else
   FAIL=1
 fi
 
+# ---------------------------------------------------------------------------
+# CM-68 — pin the Langfuse host through main.bicep so a redeploy can't revert
+# LANGFUSE_HOST to the EU default in container-app.bicep (prod project is US).
+# ---------------------------------------------------------------------------
+echo "▶  Verifying main.bicep declares a langfuseHost param defaulting to the US region (CM-68)"
+if grep -Eq "param[[:space:]]+langfuseHost[[:space:]]+string[[:space:]]*=[[:space:]]*'https://us\.cloud\.langfuse\.com'" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langfuseHost param present, defaults to https://us.cloud.langfuse.com"
+else
+  echo "   ✗ main.bicep missing langfuseHost param or its US default"
+  FAIL=1
+fi
+
+echo "▶  Verifying main.bicep passes langfuseHost through to the container module (CM-68)"
+if grep -Eq "langfuseHost:[[:space:]]*langfuseHost" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ langfuseHost forwarded to container-app module (survives redeploys)"
+else
+  echo "   ✗ main.bicep does NOT forward langfuseHost to the container module"
+  FAIL=1
+fi
+
 if [ $FAIL -ne 0 ]; then
   echo ""
   echo "❌ Lint test FAILED"

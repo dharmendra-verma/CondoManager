@@ -114,3 +114,34 @@ def test_init_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
         assert first is fake_client
         assert second is fake_client
         assert fake_module.Langfuse.call_count == 1
+
+
+def test_init_does_not_read_attrs_off_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (CM-68): ``init_langfuse`` must not read any attribute off
+    the constructed client.
+
+    ``langfuse==2.60.10`` has no public ``.host`` attribute, so the old
+    ``_client.host`` log line raised ``AttributeError`` and crashed app
+    startup the moment real keys enabled this path (the prod revision went
+    ``ActivationFailed``). ``MagicMock(spec=[])`` rejects ANY attribute
+    access — mirroring the real client — so this test fails if the code
+    ever reads a client attribute again. The host must instead come from
+    the env and be handed to the constructor.
+    """
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk_real")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk_real")
+    monkeypatch.setenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
+    monkeypatch.delenv("LANGFUSE_ENABLED", raising=False)
+
+    # spec=[] → accessing e.g. ``.host`` raises AttributeError, like langfuse 2.60.
+    fake_client = MagicMock(spec=[])
+    fake_module = MagicMock()
+    fake_module.Langfuse.return_value = fake_client
+
+    with patch.dict("sys.modules", {"langfuse": fake_module}):
+        client = lfe.init_langfuse()  # must NOT raise AttributeError
+
+    assert client is fake_client
+    # Host was resolved from the env and handed to the ctor (not read back).
+    _, kwargs = fake_module.Langfuse.call_args
+    assert kwargs["host"] == "https://us.cloud.langfuse.com"

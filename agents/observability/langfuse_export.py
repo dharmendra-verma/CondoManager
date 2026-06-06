@@ -107,13 +107,19 @@ def init_langfuse() -> Langfuse | None:
     # Lazy import — the SDK transitively pulls httpx; pay only when used.
     from langfuse import Langfuse  # noqa: PLC0415
 
+    # Resolve the host once and reuse it for both the ctor and the log line.
+    # Do NOT read it back off the client: langfuse>=2.40 (we pin 2.60.10) does
+    # not expose a public ``.host`` attribute, so ``_client.host`` raises
+    # AttributeError and crashes app startup the moment real keys make this
+    # path run (CM-68 — the failure that ActivationFailed the prod revision).
+    host = _env_or_none("LANGFUSE_HOST") or "https://cloud.langfuse.com"
     _client = Langfuse(
         public_key=_env_or_none("LANGFUSE_PUBLIC_KEY"),
         secret_key=_env_or_none("LANGFUSE_SECRET_KEY"),
-        host=_env_or_none("LANGFUSE_HOST") or "https://cloud.langfuse.com",
+        host=host,
     )
     # Never log key material; host is fine (operator-visible URL).
-    _log.info("Langfuse client initialised, host=%s", _client.host)
+    _log.info("Langfuse client initialised, host=%s", host)
     return _client
 
 
