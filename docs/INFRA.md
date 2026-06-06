@@ -604,12 +604,26 @@ distributions per LangGraph node, hallucination signals).
 |-------------------------|----------------------------------------------|----------------------------------|
 | `LANGFUSE_PUBLIC_KEY`   | KV secret `langfuse-public-key` via Container App `secretRef` (CM-65) | unset → Langfuse disabled        |
 | `LANGFUSE_SECRET_KEY`   | KV secret `langfuse-secret-key` via Container App `secretRef` (CM-65) | unset → Langfuse disabled        |
-| `LANGFUSE_HOST`         | `langfuseHost` param in container-app.bicep (plaintext) | `https://cloud.langfuse.com`     |
+| `LANGFUSE_HOST`         | `langfuseHost` param — set in `main.bicep`, forwarded to container-app.bicep (plaintext) (CM-68) | `https://us.cloud.langfuse.com`  |
 | `LANGFUSE_ENABLED`      | optional override                            | unset (use key presence)         |
 
 `agents/observability/langfuse_export.py` reads these at call time, so
 operators can toggle the killswitch by patching the Container App
 revision without redeploying the image.
+
+> **Region (CM-68).** Langfuse Cloud has two independent data residencies —
+> **US** (`https://us.cloud.langfuse.com`) and **EU** (`https://cloud.langfuse.com`) —
+> with **non-interchangeable keys**. The CondoManager prod project is **US**, so
+> `main.bicep` defaults `langfuseHost` to the US URL and forwards it to
+> `container-app.bicep` (whose own default stays EU). Forwarding from `main.bicep`
+> is what makes the host **survive redeploys**; without it a deploy would revert
+> `LANGFUSE_HOST` to EU and break auth against US keys. For an EU/self-hosted
+> backend, override the `langfuseHost` param at deploy time.
+>
+> **Bug note (CM-68).** `init_langfuse()` must never read `_client.host` —
+> `langfuse==2.60.10` has no such attribute and reading it crashes app startup
+> the moment real keys enable the path. The host is logged from the resolved
+> env value instead. Regression-covered in `tests/observability/test_langfuse_export.py`.
 
 **Wiring (CM-65).** `main.bicep` sets `langfuseEnabled = env == 'prod'` — the mirror
 of `langsmithEnabled = env == 'dev'`; the two tracing backends are split by env so
