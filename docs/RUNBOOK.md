@@ -387,9 +387,8 @@ embed → upsert into `policies-vector`).
 - Azure OpenAI embedding configured: `AZURE_OPENAI_ENDPOINT` +
   `AZURE_OPENAI_API_KEY` (optionally `AZURE_OPENAI_EMBEDDING_DEPLOYMENT`,
   default `text-embedding-3-small`).
-- `.txt` / `.md` work out of the box; **`.pdf` needs the optional extra**:
-  `pip install "condomanager-agents[ingest]"` (a `.pdf` found without it is
-  reported as *unsupported* and skipped — never a crash). OCR of scanned/
+- `.txt`, `.md`, and `.pdf` are all supported out of the box — no extra install
+  step (CM-67 made PDF text extraction a core dependency). OCR of scanned/
   image-only PDFs is **not** supported (text-extractable PDFs only).
 
 ```bash

@@ -21,9 +21,11 @@ from Cosmos (``prune=True``, the default). ``prune=False`` is the additive
 top-up mode. A manual run is always a full folder re-scan; idempotency comes
 from the content-hash skip in ``run_sync``, not from Drive-style delta tokens.
 
-PDF text extraction needs ``pypdf`` (the optional ``[ingest]`` extra). It is
-lazy-imported; if a ``.pdf`` is present but ``pypdf`` is not installed, the
-file is reported as *unsupported* (skipped, logged) rather than crashing.
+PDF text extraction uses ``pypdf``, a **core** runtime dependency since CM-67
+(it was the optional ``[ingest]`` extra in CM-66). It is still lazy-imported,
+and the defensive "``pypdf`` missing → report the ``.pdf`` as *unsupported*
+(skipped, logged) rather than crash" path is kept as a safety net for broken or
+partial installs — but on a normal install ``.pdf`` is a first-class format.
 """
 
 from __future__ import annotations
@@ -62,7 +64,8 @@ def default_source(folder: Path) -> str:
 
 
 def _pypdf_available() -> bool:
-    """Whether the optional ``pypdf`` (``[ingest]`` extra) is importable."""
+    """Whether ``pypdf`` is importable (a core dep since CM-67; guarded so a
+    broken/partial install degrades to skip-the-pdf rather than crashing)."""
     return importlib.util.find_spec("pypdf") is not None
 
 
@@ -128,8 +131,9 @@ class LocalFolderClient:
                 continue
             if ext == ".pdf" and not pdf_ok:
                 _log.warning(
-                    "skipping %s — pypdf not installed (pip install "
-                    "'condomanager-agents[ingest]')",
+                    "skipping %s — pypdf is not importable; it is a core "
+                    "dependency, so reinstall the package (pip install -e . or "
+                    "-r requirements-lock.txt) to enable PDF ingestion",
                     rel,
                 )
                 self.skipped_unsupported.append(f"{rel} (pypdf not installed)")
