@@ -624,6 +624,14 @@ revision without redeploying the image.
 > `langfuse==2.60.10` has no such attribute and reading it crashes app startup
 > the moment real keys enable the path. The host is logged from the resolved
 > env value instead. Regression-covered in `tests/observability/test_langfuse_export.py`.
+>
+> **Delivery reliability (CM-71).** Langfuse ingestion is **async + batched** with
+> a server-side processing delay. The prod Container App therefore runs
+> **`minReplicas=1`** (`main.bicep`: `env == 'prod' ? 1 : 0`) — a scale-to-zero
+> teardown immediately after a reply could otherwise drop the buffered trace
+> before it's delivered (the CM-69 per-request `flush()` reduces but doesn't fully
+> close that cold→zero race). Keeping one warm replica also removes chat
+> cold-starts. Cost: one always-on 0.25 vCPU / 0.5 GiB replica.
 
 **Wiring (CM-65).** `main.bicep` sets `langfuseEnabled = env == 'prod'` — the mirror
 of `langsmithEnabled = env == 'dev'`; the two tracing backends are split by env so

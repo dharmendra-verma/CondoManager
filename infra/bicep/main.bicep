@@ -294,6 +294,12 @@ module containerApp './modules/container-app.bicep' = {
     targetPort: containerTargetPort
     registryServer: hasAgentImage ? acr.outputs.loginServer : ''
     webchatEnabled: hasAgentImage
+    // CM-71: keep prod warm (minReplicas=1) so Langfuse trace ingestion — which
+    // is async + batched with a server-side processing delay — reliably completes;
+    // a scale-to-zero teardown right after a reply can drop the buffered trace
+    // (the CM-69 per-request flush helps but the cold→zero race remains). Also
+    // removes chat cold-starts. Dev (if ever restored) stays scale-to-zero.
+    minReplicas: env == 'prod' ? 1 : 0
     // CM-60: allow the prod portal (Static Web App) origin to call /web/* from
     // the browser. Creates an implicit dependency on the staticWebApp module.
     webchatCorsOrigins: hasAgentImage ? 'https://${staticWebApp.outputs.defaultHostname}' : ''
