@@ -114,6 +114,15 @@ gdrive = [
 security = [
   "azure-ai-textanalytics>=5.3,<6",
 ]
+# CM-66: PDF text extraction for the manual local-folder policy ingestion script
+# (infra/scripts/ingest-local-folder.py via agents/knowledge/local_source.py).
+# OPTIONAL, operator-only — pypdf is lazy-imported and only reached when a .pdf
+# is ingested; .txt/.md need nothing here. A .pdf found without this extra is
+# reported as unsupported (skipped), not a crash. Stays out of the base runtime
+# + requirements-lock.txt (same pattern as the gdrive / security extras).
+ingest = [
+  "pypdf>=4,<6",
+]
 
 [tool.setuptools.packages.find]
 include = ["agents*"]
@@ -161,6 +170,8 @@ module = [
   "langchain_text_splitters.*",
   # CM-38: optional `security` extra, not installed in CI (lazy-imported).
   "azure.ai.textanalytics",
+  # CM-66: optional `ingest` extra (pypdf), not installed in CI (lazy-imported).
+  "pypdf",
 ]
 ignore_missing_imports = true
 
