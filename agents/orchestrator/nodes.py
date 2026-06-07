@@ -24,6 +24,7 @@ preserving the original stub's keyword routing.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -75,6 +76,12 @@ ROUTE_MAINTENANCE: str = "maintenance"
 #: Negligible next to the LLM call but kept so the CM-26 cost cap is honest.
 KNOWLEDGE_QUERY_EMBED_COST_USD: float = 0.000001
 
+#: Module logger — structured JSON to stdout via the CM-21 logging config. Used
+#: for CM-77 real-time decision lines (intent/route/confidence) that show up in
+#: the Container Apps log stream instantly, unlike the minutes-batched Langfuse /
+#: App Insights spans.
+_log = logging.getLogger(__name__)
+
 
 def _guardrail_termination(reason: str | None) -> dict[str, Any]:
     """Build the state update a node returns when its guardrail trips."""
@@ -122,6 +129,18 @@ def triage(state: AgentState) -> dict[str, Any]:
         # CM-39: PRD metric — intent → route (feeds triage-accuracy + routing
         # dashboards; the offline eval gates the same quantity on golden data).
         emit_metric(METRIC_TRIAGE_ROUTE, intent=result.intent.value, route=route)
+
+        # CM-77: real-time decision log so the Container Apps log stream shows the
+        # routing within seconds (Langfuse/App Insights ingestion lags minutes).
+        # Metadata only — no message content — so PII never lands in logs;
+        # request_id + tenant_id are auto-attached by the JSON formatter.
+        _log.info(
+            "triage decision: intent=%s urgency=%s tone=%s route=%s",
+            result.intent.value,
+            result.urgency.value,
+            result.tone.value,
+            route,
+        )
 
         return {
             "intent": result.intent,
@@ -176,6 +195,19 @@ def knowledge(state: AgentState) -> dict[str, Any]:
             else state.raw_message
         )
         answer, cost, searches = _answer_knowledge(message, state.tenant_id)
+
+        # CM-77: real-time decision log (see triage). confidence + refusal +
+        # handoff are exactly what's needed to debug "why did this go to
+        # Maintenance" live, instead of waiting on batched Langfuse traces.
+        # Metadata only (no answer/question text) so PII stays out of logs.
+        _log.info(
+            "knowledge decision: status=%s confidence=%.3f search_count=%d citations=%d route=%s",
+            "refused" if answer.refused else "answered",
+            answer.confidence,
+            searches,
+            len(answer.citations),
+            ROUTE_MAINTENANCE if answer.refused else "respond",
+        )
 
         # CM-39: PRD metrics — self-service (answered) vs hallucination-control
         # (refused → handoff). Same quantities the knowledge offline eval gates.
