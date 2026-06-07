@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from agents.channels.base import NormalizationError
-from agents.observability import configure_otel
+from agents.observability import configure_logging, configure_otel
 from agents.observability.langfuse_export import flush_langfuse, init_langfuse
 
 from .flag import is_webchat_enabled
@@ -53,6 +53,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ``@observe_node`` decorators and ``langgraph_node_span`` calls have no
     initialized backend to emit to.
     """
+    # CM-77: initialize structured JSON stdout logging FIRST so every subsequent
+    # app log — startup, init_langfuse, and the per-request triage/knowledge
+    # decision lines — emits at INFO and shows up in the Container Apps log stream
+    # in real time. Without this the app's loggers fall back to Python's default
+    # (root=WARNING, no JSON handler) and all INFO app logs are silently dropped
+    # (only uvicorn's own access logs appear) — which is why the decision lines
+    # were invisible until now.
+    configure_logging(service_name="condomanager-webchat", environment=_DEPLOY_ENV)
     configure_otel(service_name="condomanager-webchat", environment=_DEPLOY_ENV, app=app)
     init_langfuse()
     try:
