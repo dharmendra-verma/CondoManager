@@ -200,10 +200,13 @@ def knowledge(state: AgentState) -> dict[str, Any]:
         # handoff are exactly what's needed to debug "why did this go to
         # Maintenance" live, instead of waiting on batched Langfuse traces.
         # Metadata only (no answer/question text) so PII stays out of logs.
+        # All %s: the PII masking filter (logging.py) stringifies every log arg
+        # before the formatter runs, so numeric specifiers (%d/%.3f) would
+        # TypeError on the now-string args. Pre-format confidence to 3 decimals.
         _log.info(
-            "knowledge decision: status=%s confidence=%.3f search_count=%d citations=%d route=%s",
+            "knowledge decision: status=%s confidence=%s search_count=%s citations=%s route=%s",
             "refused" if answer.refused else "answered",
-            answer.confidence,
+            f"{answer.confidence:.3f}",
             searches,
             len(answer.citations),
             ROUTE_MAINTENANCE if answer.refused else "respond",
