@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agents.knowledge.llm import RagModelOutput
-from agents.knowledge.models import RetrievedChunk, VectorChunk
+from agents.knowledge.models import CONFIDENCE_THRESHOLD, RetrievedChunk, VectorChunk
 from agents.knowledge.rag import REFUSAL_TEXT, answer_question
 
 
@@ -57,12 +57,14 @@ def test_grounded_answer_with_citation() -> None:
 
 
 def test_refuses_below_confidence_threshold() -> None:
-    # Model is willing, but the top similarity (0.4) is below 0.6 → refuse.
+    # Model is willing, but the top similarity is below CONFIDENCE_THRESHOLD → refuse.
+    # Derived from the constant so the test tracks the threshold automatically.
+    low_similarity = round(CONFIDENCE_THRESHOLD - 0.1, 4)
     model = _FakeModel(RagModelOutput(can_answer=True, answer="x", used_chunks=[1]))
-    out = answer_question("q", [_rc("d1", similarity=0.4)], model=model)
+    out = answer_question("q", [_rc("d1", similarity=low_similarity)], model=model)
     assert out.refused is True
     assert out.answer == REFUSAL_TEXT
-    assert out.confidence == 0.4
+    assert out.confidence == low_similarity
 
 
 def test_refuses_when_model_cannot_answer_even_if_similar() -> None:
