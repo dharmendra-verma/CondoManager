@@ -95,6 +95,12 @@ param langfuseSecretKeyKvSecretUri string = ''
 @description('Langfuse host routed via LANGFUSE_HOST (CM-65). Plaintext (not a secret); the Cloud default. Override for self-hosted/EU Langfuse.')
 param langfuseHost string = 'https://cloud.langfuse.com'
 
+@description('Azure OpenAI endpoint for the Knowledge agent embeddings (CM-75). Emitted as AZURE_OPENAI_ENDPOINT. Empty string (default) omits the Azure OpenAI env vars, leaving the Knowledge agent embedder unconfigured so RAG refuses every policy question. Pairs with azureOpenAiKeyKvSecretUri — both required.')
+param azureOpenAiEndpoint string = ''
+
+@description('Key Vault secret URI for the Azure OpenAI API key (CM-75). Emitted as AZURE_OPENAI_API_KEY via secretRef. Empty string (default) omits the Azure OpenAI env vars. Requires userAssignedIdentityId (to resolve the secretRef) and a non-empty azureOpenAiEndpoint.')
+param azureOpenAiKeyKvSecretUri string = ''
+
 @description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
 param registryServer string = ''
 
@@ -127,6 +133,10 @@ var hasLangsmith = hasIdentity && !empty(langsmithKvSecretUri) && !empty(langsmi
 // the secretRefs. Requiring both URIs fails closed — a half-config never
 // half-mounts (is_langfuse_enabled() needs both keys present anyway).
 var hasLangfuse = hasIdentity && !empty(langfusePublicKeyKvSecretUri) && !empty(langfuseSecretKeyKvSecretUri)
+// CM-75: the Knowledge agent's embedder needs BOTH the endpoint (plaintext) and
+// the API key (secretRef, resolved by the MI). Require both + identity so a
+// half-config never mounts a key with no endpoint (or an endpoint with no key).
+var hasAzureOpenAi = hasIdentity && !empty(azureOpenAiEndpoint) && !empty(azureOpenAiKeyKvSecretUri)
 // A private ACR pull needs the MI: Container Apps resolves the registry
 // `identity` against AcrPull at revision start. Without an identity we can only
 // pull public images (the hello-world default), so omit the registries block.
@@ -197,6 +207,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             identity: userAssignedIdentityId
             keyVaultUrl: langfuseSecretKeyKvSecretUri
           }
+        ] : [],
+        // CM-75: Azure OpenAI API key for the Knowledge agent's embedder,
+        // resolved from KV via the MI (same pattern as the Langfuse keys).
+        hasAzureOpenAi ? [
+          {
+            name: 'azure-openai-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: azureOpenAiKeyKvSecretUri
+          }
         ] : []
       )
     }
@@ -261,6 +280,20 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'LANGFUSE_HOST'
                 value: langfuseHost
+              }
+            ] : [],
+            // CM-75: Azure OpenAI config for the Knowledge agent's embedder (RAG
+            // over policies-vector). Without these, default_embedder() returns None
+            // and every policy question refuses -> Maintenance. Endpoint is
+            // plaintext; the API key comes via secretRef (MI-resolved from KV).
+            hasAzureOpenAi ? [
+              {
+                name: 'AZURE_OPENAI_ENDPOINT'
+                value: azureOpenAiEndpoint
+              }
+              {
+                name: 'AZURE_OPENAI_API_KEY'
+                secretRef: 'azure-openai-key'
               }
             ] : [],
             // CM-59: enable the CM-55 web-chat channel in prod. The flag module

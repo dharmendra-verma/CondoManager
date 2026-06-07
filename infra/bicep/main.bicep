@@ -250,6 +250,9 @@ var langsmithKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langsmith-api-ke
 // CM-65: Langfuse public + secret keys, resolved by the MI at revision start.
 var langfusePublicKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langfuse-public-key'
 var langfuseSecretKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langfuse-secret-key'
+// CM-75: KV secret URI for the Azure OpenAI API key, mounted into the agent
+// runtime as AZURE_OPENAI_API_KEY (secretRef) so the Knowledge embedder can auth.
+var azureOpenAiKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/azure-openai-key'
 
 // CM-23: project name routed via LANGCHAIN_PROJECT. One LangSmith project per
 // env so traces don't bleed between dev iteration and any prod opt-in.
@@ -307,6 +310,14 @@ module containerApp './modules/container-app.bicep' = {
     // Cosmos container (the MI already holds Cosmos data-plane RBAC via
     // cosmosRbac). Only wired when the real agent image runs the channel.
     cosmosEndpoint: hasAgentImage ? cosmos.outputs.endpoint : ''
+    // CM-75: wire the Azure OpenAI embedding config into the agent runtime so the
+    // Knowledge agent can embed + retrieve. Without it default_embedder() is None
+    // and every policy question refuses -> Maintenance. Endpoint is the repo var
+    // azureOpenAiEndpoint; the key resolves from KV azure-openai-key via the MI.
+    // Both passed together (module's hasAzureOpenAi gate), only when the real
+    // agent image runs the channel.
+    azureOpenAiEndpoint: hasAgentImage ? azureOpenAiEndpoint : ''
+    azureOpenAiKeyKvSecretUri: hasAgentImage ? azureOpenAiKeyKvSecretUri : ''
   }
   // The MI's AcrPull grant must exist before the revision pulls the private
   // image at start. dependsOn is unconditional (acrRbac always deploys); it is
