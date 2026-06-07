@@ -26,7 +26,9 @@ SECRET_PLACEHOLDER = "REPLACE-ME"
 
 #: CM-33: knowledge-agent confidence floor. An answer scoring below this is
 #: refused and the request is handed off to the Maintenance agent (AC).
-CONFIDENCE_THRESHOLD = 0.5
+#: CM-78: lowered 0.5->0.40 (was 0.6 pre-CM-74). text-embedding-3-small relevant
+#: matches sit ~0.43-0.46; the LLM can_answer guard still blocks hallucination.
+CONFIDENCE_THRESHOLD = 0.40
 
 #: Per-document outcome of one sync pass.
 DocStatus = Literal["indexed", "skipped", "removed", "failed"]
