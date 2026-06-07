@@ -36,7 +36,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Mapping
 from typing import Any
 
 from agents.observability.correlation import (
@@ -51,25 +50,27 @@ _configured: bool = False
 
 
 class PiiMaskingFilter(logging.Filter):
-    """Apply ``mask_pii`` to ``record.msg`` and ``record.args``.
+    """Mask PII in the fully-rendered log message.
 
-    Attached to the handler BEFORE the formatter runs, so JSON output
-    contains masked text from the start (no double-rebuild of the message).
+    Renders the record's ``%``-args FIRST (via ``getMessage()``), then masks the
+    finished string and clears ``args`` so the formatter doesn't re-apply them.
 
-    Logging code must never raise — any internal failure here is swallowed
-    so a bad input pattern doesn't take down the application.
+    Rendering before masking is essential: ``mask_pii`` stringifies its input, so
+    masking args individually *before* formatting would feed strings to numeric
+    specifiers — ``"%d" % "0"`` raises ``TypeError`` — and break any ``%d`` /
+    ``%.3f`` log line, including third-party libraries (e.g. httpx request logs).
+    Masking the rendered message is also strictly more correct: it catches PII
+    that spans the template + args boundary.
+
+    Attached to the handler BEFORE the formatter runs, so JSON output contains
+    masked text from the start. Logging code must never raise — any internal
+    failure here is swallowed so a bad input pattern can't take down the app.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            record.msg = mask_pii(str(record.msg))
-            if record.args:
-                if isinstance(record.args, Mapping):
-                    record.args = {
-                        k: mask_pii(str(v)) for k, v in record.args.items()
-                    }
-                elif isinstance(record.args, tuple):
-                    record.args = tuple(mask_pii(str(a)) for a in record.args)
+            record.msg = mask_pii(record.getMessage())
+            record.args = None
         except Exception:  # noqa: BLE001 — logging must never raise
             pass
         return True

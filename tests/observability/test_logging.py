@@ -220,6 +220,27 @@ def test_pii_filter_does_not_raise_on_non_string_args() -> None:
     assert "***@***.***" in record["msg"]
 
 
+def test_pii_filter_preserves_numeric_format_specifiers() -> None:
+    """Numeric ``%d`` / ``%.3f`` args render correctly through the filter.
+
+    Regression: the filter renders args BEFORE masking, so it must not
+    str()-ify them first — otherwise ``"%d" % "0"`` raises TypeError and breaks
+    every numeric log line (ours + third-party libraries like httpx).
+    """
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(JsonFormatter(service_name="svc", environment="dev"))
+    handler.addFilter(PiiMaskingFilter())
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+
+    logging.getLogger("demo").info("n=%d ratio=%.3f label=%s", 5, 0.5, "ok")
+    record = _decode_last(stream)
+    assert record["msg"] == "n=5 ratio=0.500 label=ok"
+
+
 def test_exception_populates_exc_info() -> None:
     """logger.exception(...) yields a record with exc_info in the JSON."""
     stream = io.StringIO()
