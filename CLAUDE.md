@@ -161,7 +161,7 @@ The user never types `git worktree add`, `git checkout`, `mv`, or any path.
 ### Known paths (memorize)
 
 ```
-WORKSPACE      = C:\Users\to_dh\OneDrive\Working\Condo Manager
+WORKSPACE      = C:\Users\to_dh\AppData\Roaming\Claude\Working\Condo Manager
 CLONE_DEFAULT  = the dir containing this CLAUDE.md (use `git rev-parse --show-toplevel`)
                  if not in a clone, fall back to common locations and ask if none found
 PLANNING       = WORKSPACE\Planning
