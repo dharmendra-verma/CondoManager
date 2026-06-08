@@ -50,9 +50,13 @@ def register_auto_instrumentation(*, app: Any | None = None) -> None:
         _log.debug("auto-instrumentation already registered; skipping")
         return
 
-    # FastAPI — per-app if we have it, global otherwise.
+    # FastAPI — per-app if we have it, global otherwise. The per-app branch
+    # delegates to ``instrument_fastapi_app`` so there is one code path that
+    # attaches the server-span middleware; when the app was already instrumented
+    # at import time (the correct place — see that function's docstring) this is
+    # an idempotent no-op.
     if app is not None:
-        FastAPIInstrumentor.instrument_app(app)
+        instrument_fastapi_app(app)
     else:
         FastAPIInstrumentor().instrument()
 
@@ -67,6 +71,27 @@ def register_auto_instrumentation(*, app: Any | None = None) -> None:
     _register_traceloop_for_langchain()
 
     _instrumented = True
+
+
+def instrument_fastapi_app(app: Any) -> None:
+    """Attach FastAPI server-span instrumentation to ``app`` — call at IMPORT time.
+
+    This MUST run right after the FastAPI app is constructed, BEFORE the ASGI
+    server (uvicorn) builds the middleware stack and starts serving.
+    ``FastAPIInstrumentor.instrument_app`` adds an ASGI middleware, and Starlette
+    freezes its middleware stack on startup; calling it later (e.g. from the
+    FastAPI lifespan, where ``configure_otel(app=app)`` runs) is too late and
+    silently yields ZERO server-request spans. That is exactly why App Insights
+    showed traces/dependencies/metrics but an empty ``requests`` table — so the
+    latency / Performance panels never lit up (CM-80).
+
+    Idempotent: the instrumentor sets ``_is_instrumented_by_opentelemetry`` on the
+    app, so a later ``register_auto_instrumentation(app=app)`` call no-ops it. The
+    middleware resolves the global TracerProvider lazily per request, so attaching
+    it before ``setup_tracer_provider`` runs in the lifespan is safe — the spans
+    still land on whatever provider is global when the request is handled.
+    """
+    FastAPIInstrumentor.instrument_app(app)
 
 
 def _register_openai_instrumentation() -> None:

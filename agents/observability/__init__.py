@@ -37,7 +37,7 @@ from .correlation import (
     with_request_id,
     with_tenant,
 )
-from .instrumentation import register_auto_instrumentation
+from .instrumentation import instrument_fastapi_app, register_auto_instrumentation
 from .logging import configure_logging
 from .metrics import (
     METRIC_ACK_LATENCY,
@@ -78,6 +78,7 @@ __all__ = [
     "get_agent_name",
     "get_request_id",
     "get_tenant_id",
+    "instrument_fastapi_app",
     "langgraph_node_span",
     "mask_pii",
     "new_request_id",

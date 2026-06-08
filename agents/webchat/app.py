@@ -28,7 +28,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from agents.channels.base import NormalizationError
-from agents.observability import configure_logging, configure_otel
+from agents.observability import (
+    configure_logging,
+    configure_otel,
+    instrument_fastapi_app,
+)
 from agents.observability.langfuse_export import flush_langfuse, init_langfuse
 
 from .flag import is_webchat_enabled
@@ -75,6 +79,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="condomanager-webchat-test", docs_url=None, redoc_url=None, lifespan=_lifespan
 )
+
+# CM-80: attach FastAPI server-request instrumentation HERE, at import time —
+# before uvicorn builds the middleware stack and starts serving. Doing it in
+# _lifespan (where configure_otel(app=app) runs) is too late: Starlette freezes
+# the middleware stack at startup, so instrument_app() silently fails to add its
+# span middleware and NO server-request spans are emitted. That left the App
+# Insights `requests` table — and the latency panel — empty in prod even though
+# traces, dependencies, and metrics all flowed. The exporter/provider/Langfuse
+# setup stays in the lifespan; only this middleware attachment must move earlier.
+instrument_fastapi_app(app)
 
 # The SPA calls these endpoints cross-origin. In local dev that's the vite dev
 # server (localhost:5173); in prod the portal is served from the Static Web App,
