@@ -31,15 +31,7 @@ from uuid import uuid4
 
 from langgraph.types import interrupt
 
-from agents.knowledge import (
-    KnowledgeAnswer,
-    answer_question,
-    default_embedder,
-    get_chat_model,
-    get_vector_store,
-    retrieve,
-)
-from agents.knowledge.rag import REFUSAL_TEXT
+from agents.knowledge import get_knowledge_planner
 from agents.observability import (
     METRIC_ESCALATION_LEGAL_FLAG,
     METRIC_FOLLOWUP,
@@ -71,10 +63,6 @@ ROUTE_GUARDRAIL_TERMINATED: str = "guardrail_terminated"
 #: hands the request off to the Maintenance agent (AC). Matches the triage
 #: route string + the graph conditional-edge key.
 ROUTE_MAINTENANCE: str = "maintenance"
-
-#: Flat estimate for one query embedding (text-embedding-3-small, ~20 tokens).
-#: Negligible next to the LLM call but kept so the CM-26 cost cap is honest.
-KNOWLEDGE_QUERY_EMBED_COST_USD: float = 0.000001
 
 #: Module logger — structured JSON to stdout via the CM-21 logging config. Used
 #: for CM-77 real-time decision lines (intent/route/confidence) that show up in
@@ -152,28 +140,6 @@ def triage(state: AgentState) -> dict[str, Any]:
         }
 
 
-def _answer_knowledge(message: str, tenant_id: str) -> tuple[KnowledgeAnswer, float, int]:
-    """Run the RAG flow for one question.
-
-    Returns ``(answer, cost_usd, searches_run)``. When the Cosmos store or the
-    embedder is unconfigured (offline / dev / CI), we cannot retrieve — so we
-    refuse WITHOUT any model or network call, preserving the spine's
-    no-credentials contract (CM-28). Refusal then routes to Maintenance.
-    """
-    store = get_vector_store()
-    embedder = default_embedder()
-    if store is None or embedder is None:
-        return KnowledgeAnswer(answer=REFUSAL_TEXT, confidence=0.0, refused=True), 0.0, 0
-
-    model = get_chat_model()
-    retrieved = retrieve(message, tenant_id=tenant_id, store=store, embedder=embedder)
-    answer = answer_question(message, retrieved, model=model)
-    # Bill the LLM only when it was actually invoked (retrieved non-empty);
-    # a vector search ran either way, so always count one search.
-    cost = (model.cost_per_call_usd if retrieved else 0.0) + KNOWLEDGE_QUERY_EMBED_COST_USD
-    return answer, cost, 1
-
-
 @observe_node("knowledge")
 def knowledge(state: AgentState) -> dict[str, Any]:
     """Knowledge Agent (CM-33) — RAG over the Cosmos ``policies-vector`` store.
@@ -184,6 +150,13 @@ def knowledge(state: AgentState) -> dict[str, Any]:
     be retrieved) it refuses and hands off to Maintenance via ``routes``.
     Bumps ``search_count`` / ``cost_so_far`` so the CM-26 guardrails stay
     meaningful. Runs credential-free (refusal path) when unconfigured.
+
+    CM-83: the RAG flow is delegated to a :class:`~agents.knowledge.planner`
+    reasoning loop (env-selected via :func:`get_knowledge_planner`). The loop
+    re-checks the guardrails on every iteration; a mid-loop trip is surfaced as
+    ``PlannerResult.guardrail_reason`` and handled here exactly like this node's
+    own first-statement check. The default policy is single-pass, so behaviour
+    is byte-identical to the pre-CM-83 single-shot path.
     """
     with langgraph_node_span("knowledge", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
@@ -194,7 +167,12 @@ def knowledge(state: AgentState) -> dict[str, Any]:
             state.normalized.content if state.normalized is not None
             else state.raw_message
         )
-        answer, cost, searches = _answer_knowledge(message, state.tenant_id)
+        result = get_knowledge_planner().run(message, state=state)
+        if result.guardrail_reason is not None:
+            # A Stop Rule tripped inside the loop — terminate exactly as a node
+            # would on its own guardrail check.
+            return _guardrail_termination(result.guardrail_reason)
+        answer, cost, searches = result.answer, result.cost_usd, result.searches
 
         # CM-77: real-time decision log (see triage). confidence + refusal +
         # handoff are exactly what's needed to debug "why did this go to

@@ -23,6 +23,12 @@ CM-33 (Knowledge Agent / RAG read side) adds:
 * :func:`answer_question` — grounded answer with citations + confidence.
 * :func:`get_chat_model` / :class:`ChatModel` — env-driven answerer (+ stub).
 * Models: :class:`KnowledgeAnswer`, :class:`RetrievedChunk`, :class:`Citation`.
+
+CM-83 (Track A) wraps the RAG flow in a bounded reasoning loop:
+
+* :func:`get_knowledge_planner` / :class:`KnowledgePlanner` — env-driven loop
+  scaffold (real LLM loop vs deterministic ``StubKnowledgePlanner``), single-pass
+  by default. :class:`PlannerResult` carries the answer + search/cost accounting.
 """
 
 from __future__ import annotations
@@ -57,6 +63,11 @@ from agents.knowledge.models import (
     VectorChunk,
     chunk_id,
 )
+from agents.knowledge.planner import (
+    KnowledgePlanner,
+    PlannerResult,
+    get_knowledge_planner,
+)
 from agents.knowledge.rag import answer_question
 from agents.knowledge.retrieval import retrieve
 from agents.knowledge.sync import run_sync
@@ -75,8 +86,10 @@ __all__ = [
     "Embedder",
     "GoogleDriveClient",
     "KnowledgeAnswer",
+    "KnowledgePlanner",
     "SUPPORTED_EXTENSIONS",
     "LocalFolderClient",
+    "PlannerResult",
     "RetrievedChunk",
     "SyncReport",
     "SyncState",
@@ -87,6 +100,7 @@ __all__ = [
     "default_embedder",
     "default_source",
     "get_chat_model",
+    "get_knowledge_planner",
     "get_vector_store",
     "ingest_folder",
     "retrieve",

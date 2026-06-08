@@ -1,15 +1,18 @@
 """Tests for the CM-33 Knowledge node in ``agents.orchestrator.nodes``.
 
-The node reads its collaborators from module-level factories
-(``get_vector_store`` / ``default_embedder`` / ``get_chat_model``) and the
-``retrieve`` / ``answer_question`` functions — all imported into the ``nodes``
-namespace, so we monkeypatch them there to drive each branch deterministically.
+CM-83: the node delegates the RAG flow to a ``KnowledgePlanner`` obtained from
+``nodes.get_knowledge_planner()``. We monkeypatch that seam to a fake planner to
+drive each branch deterministically; the planner-internal behaviour (looping,
+per-iteration guardrail re-checks, search/cost accounting, the offline contract)
+is covered in ``tests/knowledge/test_planner.py``. This module asserts only how
+the node translates a ``PlannerResult`` into the state update.
 """
 
 from __future__ import annotations
 
 import pytest
 from agents.knowledge.models import Citation, KnowledgeAnswer
+from agents.knowledge.planner import PlannerResult
 from agents.knowledge.rag import REFUSAL_TEXT
 from agents.observability import with_request_id
 from agents.orchestrator import AgentState, Channel, build_graph, nodes
@@ -17,8 +20,16 @@ from langgraph.checkpoint.memory import MemorySaver
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 
-class _Model:
-    cost_per_call_usd = 0.01
+class _FakePlanner:
+    """Stands in for the env-selected ``KnowledgePlanner``."""
+
+    def __init__(self, result: PlannerResult) -> None:
+        self._result = result
+        self.calls: list[tuple[str, AgentState]] = []
+
+    def run(self, message: str, *, state: AgentState) -> PlannerResult:
+        self.calls.append((message, state))
+        return self._result
 
 
 def _state(**kw: object) -> AgentState:
@@ -31,12 +42,10 @@ def _state(**kw: object) -> AgentState:
     return AgentState(**base)  # type: ignore[arg-type]
 
 
-def _wire_answered(monkeypatch: pytest.MonkeyPatch, answer: KnowledgeAnswer) -> None:
-    monkeypatch.setattr(nodes, "get_vector_store", lambda: object())
-    monkeypatch.setattr(nodes, "default_embedder", lambda: object())
-    monkeypatch.setattr(nodes, "get_chat_model", lambda: _Model())
-    monkeypatch.setattr(nodes, "retrieve", lambda *a, **k: ["chunk"])
-    monkeypatch.setattr(nodes, "answer_question", lambda *a, **k: answer)
+def _wire(monkeypatch: pytest.MonkeyPatch, result: PlannerResult) -> _FakePlanner:
+    planner = _FakePlanner(result)
+    monkeypatch.setattr(nodes, "get_knowledge_planner", lambda: planner)
+    return planner
 
 
 def test_answered_sets_output_and_bumps_counters(
@@ -48,7 +57,9 @@ def test_answered_sets_output_and_bumps_counters(
         confidence=0.9,
         refused=False,
     )
-    _wire_answered(monkeypatch, answer)
+    planner = _wire(
+        monkeypatch, PlannerResult(answer=answer, cost_usd=0.011, searches=1, steps=1)
+    )
 
     out = nodes.knowledge(_state(search_count=0, cost_so_far=0.0))
 
@@ -57,13 +68,25 @@ def test_answered_sets_output_and_bumps_counters(
     assert out["output"]["citations"][0]["doc_id"] == "d1"
     assert out["output"]["confidence"] == 0.9
     assert out["search_count"] == 1
-    assert out["cost_so_far"] == 0.01 + nodes.KNOWLEDGE_QUERY_EMBED_COST_USD
+    assert out["cost_so_far"] == pytest.approx(0.011)
     assert "routes" not in out  # answered = terminal
+    # The node forwards the (masked) message + state to the planner.
+    assert planner.calls[0][0] == "what are the quiet hours"
+
+
+def test_counters_accumulate_onto_existing_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = KnowledgeAnswer(answer="ok", confidence=0.8, refused=False)
+    _wire(monkeypatch, PlannerResult(answer=answer, cost_usd=0.02, searches=2, steps=2))
+
+    out = nodes.knowledge(_state(search_count=3, cost_so_far=0.5))
+
+    assert out["search_count"] == 5
+    assert out["cost_so_far"] == pytest.approx(0.52)
 
 
 def test_refusal_routes_to_maintenance(monkeypatch: pytest.MonkeyPatch) -> None:
     answer = KnowledgeAnswer(answer=REFUSAL_TEXT, confidence=0.3, refused=True)
-    _wire_answered(monkeypatch, answer)
+    _wire(monkeypatch, PlannerResult(answer=answer, cost_usd=0.011, searches=1, steps=1))
 
     out = nodes.knowledge(_state(search_count=0, cost_so_far=0.0))
 
@@ -72,17 +95,10 @@ def test_refusal_routes_to_maintenance(monkeypatch: pytest.MonkeyPatch) -> None:
     assert out["search_count"] == 1
 
 
-def test_unconfigured_refuses_without_search_or_cost(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(nodes, "get_vector_store", lambda: None)
-    monkeypatch.setattr(nodes, "default_embedder", lambda: None)
-
-    def _boom(*a: object, **k: object) -> object:
-        raise AssertionError("retrieval/answer must not run when unconfigured")
-
-    monkeypatch.setattr(nodes, "retrieve", _boom)
-    monkeypatch.setattr(nodes, "answer_question", _boom)
+def test_zero_cost_refusal_keeps_counters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The planner's offline refusal (no search/cost) passes through unchanged."""
+    answer = KnowledgeAnswer(answer=REFUSAL_TEXT, confidence=0.0, refused=True)
+    _wire(monkeypatch, PlannerResult(answer=answer, cost_usd=0.0, searches=0, steps=0))
 
     out = nodes.knowledge(_state(search_count=2, cost_so_far=1.0))
 
@@ -92,16 +108,44 @@ def test_unconfigured_refuses_without_search_or_cost(
     assert out["cost_so_far"] == 1.0  # no spend
 
 
-def test_guardrail_trip_short_circuits(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _boom() -> object:
-        raise AssertionError("guardrail must short-circuit before retrieval setup")
+def test_node_guardrail_short_circuits_before_planner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The node's first-statement guardrail check trips before the planner runs."""
 
-    monkeypatch.setattr(nodes, "get_vector_store", _boom)
+    def _boom() -> object:
+        raise AssertionError("planner must not run when the node guardrail trips")
+
+    monkeypatch.setattr(nodes, "get_knowledge_planner", _boom)
 
     out = nodes.knowledge(_state(cost_so_far=999.0))  # over the $5 cap
 
     assert out["output"]["status"] == "guardrail_terminated"
     assert out["routes"] == ["guardrail_terminated"]
+
+
+def test_mid_loop_guardrail_reason_terminates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mid-loop guardrail trip surfaced by the planner terminates the node
+    exactly like its own check — counters are NOT bumped."""
+    answer = KnowledgeAnswer(answer=REFUSAL_TEXT, confidence=0.0, refused=True)
+    _wire(
+        monkeypatch,
+        PlannerResult(
+            answer=answer,
+            cost_usd=0.05,
+            searches=4,
+            steps=3,
+            guardrail_reason="search_count 51 > 50",
+        ),
+    )
+
+    out = nodes.knowledge(_state(search_count=0, cost_so_far=0.0))
+
+    assert out["output"]["status"] == "guardrail_terminated"
+    assert out["output"]["reason"] == "search_count 51 > 50"
+    assert out["routes"] == ["guardrail_terminated"]
+    assert "search_count" not in out  # no counter bump on termination
+    assert "cost_so_far" not in out
 
 
 def test_graph_answer_is_terminal_no_maintenance(
@@ -110,15 +154,14 @@ def test_graph_answer_is_terminal_no_maintenance(
     in_memory_spans: InMemorySpanExporter,
 ) -> None:
     """A confident answer ends the graph; the Maintenance handoff edge stays cold."""
-    _wire_answered(
-        monkeypatch,
-        KnowledgeAnswer(
-            answer="Quiet hours are 10pm-7am.",
-            citations=[Citation(index=1, doc_id="d1", doc_title="Quiet Hours")],
-            confidence=0.9,
-            refused=False,
-        ),
+    answer = KnowledgeAnswer(
+        answer="Quiet hours are 10pm-7am.",
+        citations=[Citation(index=1, doc_id="d1", doc_title="Quiet Hours")],
+        confidence=0.9,
+        refused=False,
     )
+    _wire(monkeypatch, PlannerResult(answer=answer, cost_usd=0.011, searches=1, steps=1))
+
     graph = build_graph(checkpointer=memory_checkpointer)
     initial = AgentState(
         tenant_id="t1",
