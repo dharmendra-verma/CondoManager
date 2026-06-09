@@ -54,13 +54,12 @@ from .escalation import build_record, get_escalation_classifier
 from .escalation_store import get_escalation_store
 from .history import get_history_provider
 from .notify import get_manager_notifier
-from .state import AgentState, Intent
+from .state import AgentState
 from .triage import (
     ROUTE_COORDINATOR,
     get_triage_classifier,
     needs_coordinator,
     route_for,
-    route_for_intent,
 )
 
 #: Canonical route name for the guardrail-terminated terminal. The router
@@ -165,41 +164,83 @@ def triage(state: AgentState) -> dict[str, Any]:
 
 @observe_node("coordinator")
 def coordinator(state: AgentState) -> dict[str, Any]:
-    """Coordinator node (CM-87, Track B) — **pass-through stub**.
+    """Coordinator node (CM-88, Track B) — plan-execute reasoning loop.
 
     Reached only when triage flips the multi-intent / ambiguity signal
-    (:func:`~agents.orchestrator.triage.needs_coordinator`). Until B3 (CM-88)
-    lands the real decompose-and-call-tools loop, this is a deterministic
-    pass-through that falls back to today's single-route behaviour: pick the
-    **primary** intent and hand off to its specialist via
-    :func:`~agents.orchestrator.triage.route_for_intent`. The message therefore
-    reaches the *same* specialist (and the same downstream edges) it would have
-    without the Coordinator edge — so adding this node is a no-regression spine
-    change that CI can prove green before any real coordination behaviour exists.
+    (:func:`~agents.orchestrator.triage.needs_coordinator`). Replaces the CM-87
+    pass-through stub with the real "true agent": it decomposes the message into
+    sub-tasks and runs a bounded observe→think→act loop
+    (:mod:`agents.coordinator.planner`), selecting a B1 specialist tool each step
+    based on the accumulated observations — a non-deterministic trajectory whose
+    length depends on the message, not a fixed hop count.
 
-    Honours the standard node contract: the trace span + the CM-26 guardrail
-    check run first, exactly like every other node.
+    The loop owns the per-iteration guardrail check, the
+    :data:`~agents.coordinator.planner.COORDINATOR_MAX_STEPS` bound, the cost /
+    loop-step accrual (so the CM-26 caps bound the whole trajectory), and the
+    per-step ``langgraph.node.coordinator.step`` spans. This node:
+
+    1. Runs the standard span + guardrail-first contract (a Stop Rule tripped
+       *inside* the loop is surfaced as ``guardrail_reason`` and handled here
+       exactly like the node's own first-statement check).
+    2. Accumulates the sub-results on ``state.sub_results`` for the B4 synthesis
+       step (CM-89) and bumps the CM-26 counters once for the trajectory.
+    3. **Legal gate (AC #5):** if any sub-result is an escalation, the record is
+       persisted + the manager alerted (as the escalation node does), the held
+       draft is surfaced but **never** auto-sent, and the trajectory routes
+       through ``hitl_review``. Otherwise it ends the graph (``coordinator_done``).
     """
     with langgraph_node_span("coordinator", tenant_id=state.tenant_id):
         gate = guardrails.check(state)
         if gate.tripped:
             return _guardrail_termination(gate.reason)
 
-        # Primary intent was set by triage; default to UNKNOWN (→ knowledge,
-        # which can ask a clarifying question) if somehow unset.
-        primary = state.intent or Intent.UNKNOWN
-        route = route_for_intent(primary)
+        # Imported lazily so the orchestrator package has no import-time
+        # dependency on the coordinator package (which imports orchestrator.state)
+        # — mirrors the maintenance/vendor lazy-import seam style.
+        from agents.coordinator.planner import get_planner  # noqa: PLC0415
 
-        # CM-77-style real-time decision log: make the stub fall-through visible
-        # in the live log stream. Metadata only (no message content) — PII-safe.
+        result = get_planner().run(state)
+        if result.guardrail_reason is not None:
+            # A Stop Rule tripped mid-loop — terminate exactly as a node would on
+            # its own guardrail check.
+            return _guardrail_termination(result.guardrail_reason)
+
+        # CM-77-style real-time decision log: metadata only (no message content)
+        # so the live log stream shows the trajectory shape, PII-safe.
         _log.info(
-            "coordinator (stub) decision: primary_intent=%s sub_intents=%s route=%s",
-            primary.value,
-            state.sub_intents,
-            route,
+            "coordinator decision: steps=%s termination=%s sub_results=%s route=%s",
+            result.steps,
+            result.termination,
+            len(result.sub_results),
+            result.route,
         )
 
-        return {"routes": [route]}
+        output: dict[str, Any] = {
+            "status": "coordinated",
+            "sub_results": result.sub_results,
+            "steps": result.steps,
+            "termination": result.termination,
+        }
+        update: dict[str, Any] = {
+            "sub_results": result.sub_results,
+            "cost_so_far": state.cost_so_far + result.cost_usd,
+            "search_count": state.search_count + result.searches,
+            "output": output,
+            "routes": [result.route],
+        }
+        if result.escalation is not None:
+            # Persist the held record + alert the manager (mirrors the escalation
+            # node), then route through HITL. The draft is surfaced but the
+            # legal-gate invariant holds: nothing is sent without explicit
+            # approval in ``hitl_review``.
+            record = result.escalation
+            get_escalation_store().save(record)
+            notified = get_manager_notifier().notify(record)
+            update["escalation"] = record
+            output["draft"] = record.tenant_draft
+            output["legal_risk"] = record.legal_risk
+            output["manager_notified"] = notified
+        return update
 
 
 @observe_node("knowledge")

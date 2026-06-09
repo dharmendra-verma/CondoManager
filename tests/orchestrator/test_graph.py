@@ -64,23 +64,30 @@ def test_graph_registers_coordinator_node(memory_checkpointer: MemorySaver) -> N
     assert "coordinator" in set(g.get_graph().nodes.keys())
 
 
-def test_coordinator_stub_falls_back_to_primary_intent() -> None:
-    """The stub Coordinator picks the primary intent and routes to its
-    specialist — the unchanged single-route behaviour (AC #3)."""
+def test_coordinator_runs_plan_execute_trajectory() -> None:
+    """CM-88: the real Coordinator runs the decompose→call-tools loop inline and
+    accumulates the sub-results on state (replaces the CM-87 pass-through stub)."""
     state = AgentState(
         tenant_id="t-c",
         request_id="r-c",
-        intent=Intent.MAINTENANCE,
-        sub_intents=["maintenance", "escalation"],
+        raw_message="what's the pet policy and the sink is leaking in 4B",
+        intent=Intent.INQUIRY,
+        sub_intents=["inquiry", "maintenance"],
         routes=["coordinator"],
     )
     with with_request_id("r-c"):
         out = orch_nodes.coordinator(state)
-    assert out["routes"] == ["maintenance"]
+    assert out["output"]["status"] == "coordinated"
+    assert [o["tool"] for o in out["sub_results"]] == [
+        "knowledge_agent",
+        "maintenance_agent",
+    ]
+    # Terminal (no escalation gate) → ends the graph.
+    assert out["routes"] == ["coordinator_done"]
 
 
-def test_coordinator_stub_short_circuits_on_guardrail() -> None:
-    """The node honours the CM-26 guardrail contract before any routing."""
+def test_coordinator_short_circuits_on_guardrail() -> None:
+    """The node honours the CM-26 guardrail contract before running the loop."""
     state = AgentState(
         tenant_id="t-c",
         request_id="r-c",
@@ -94,30 +101,55 @@ def test_coordinator_stub_short_circuits_on_guardrail() -> None:
     assert out["routes"] == ["guardrail_terminated"]
 
 
+def test_coordinator_escalation_subresult_routes_to_hitl() -> None:
+    """Legal gate (AC #5): an escalation sub-result holds the trajectory for HITL
+    review — the record is carried on state and nothing is auto-sent."""
+    state = AgentState(
+        tenant_id="t-c",
+        request_id="r-c",
+        raw_message="fix the leak and I'm calling my lawyer about this",
+        intent=Intent.MAINTENANCE,
+        sub_intents=["maintenance", "escalation"],
+        routes=["coordinator"],
+    )
+    with with_request_id("r-c"):
+        out = orch_nodes.coordinator(state)
+    assert out["routes"] == ["hitl_review"]
+    assert out["escalation"].legal_risk is True
+    assert out["output"]["legal_risk"] is True
+    # The draft is held, never sent here.
+    assert out["output"].get("draft")
+
+
 def test_graph_dispatches_multi_intent_through_coordinator(
     memory_checkpointer: MemorySaver,
     in_memory_spans: InMemorySpanExporter,
 ) -> None:
     """A compound message (heuristic flags multi_intent) takes the
-    triage → coordinator → specialist path and reaches the right specialist."""
+    triage → coordinator path; the Coordinator calls the specialist tools inline
+    (per-step spans) rather than handing off to the specialist graph nodes."""
     graph = build_graph(checkpointer=memory_checkpointer)
     initial = AgentState(
         tenant_id="t-mi",
         request_id="r-mi",
         channel=Channel.WEB,
-        # Two maintenance issues joined by "and" → heuristic multi_intent=True,
-        # primary intent maintenance.
+        # Two maintenance issues joined by "and" → heuristic multi_intent=True.
         raw_message="the sink is leaking and the heater is broken in unit 4B",
     )
     with with_request_id("r-mi"):
         final = graph.invoke(initial, config={"configurable": {"thread_id": "thr-mi"}})
 
     span_names = {s.name for s in in_memory_spans.get_finished_spans()}
-    # The Coordinator ran...
+    # The Coordinator ran the loop with at least one per-step span (AC #6)...
     assert "langgraph.node.coordinator" in span_names
-    # ...and handed off to the maintenance specialist (same downstream subgraph).
-    assert "langgraph.node.maintenance" in span_names
-    assert final["output"]["status"] == "ticket_created"
+    assert "langgraph.node.coordinator.step" in span_names
+    # ...calling the maintenance tool inline, NOT the maintenance graph node.
+    assert "langgraph.node.maintenance" not in span_names
+    assert final["output"]["status"] == "coordinated"
+    tools = [o["tool"] for o in final["output"]["sub_results"]]
+    assert "maintenance_agent" in tools
+    # The accumulated sub-results are persisted on state for B4 synthesis (CM-89).
+    assert final["sub_results"] == final["output"]["sub_results"]
 
 
 def test_graph_single_intent_skips_coordinator(
