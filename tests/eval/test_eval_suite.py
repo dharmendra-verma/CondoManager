@@ -12,7 +12,14 @@ from agents.eval import run_suite
 
 pytestmark = pytest.mark.eval
 
-EXPECTED_AGENTS = {"triage", "knowledge", "maintenance_dedup", "vendor", "escalation"}
+EXPECTED_AGENTS = {
+    "triage",
+    "knowledge",
+    "knowledge_multihop",
+    "maintenance_dedup",
+    "vendor",
+    "escalation",
+}
 
 
 def test_suite_covers_all_agents_without_errors() -> None:

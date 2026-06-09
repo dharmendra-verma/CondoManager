@@ -748,6 +748,8 @@ exception is ack-latency, emitted at the channel-adapter entry layer).
 |---|---|---|---|
 | `metric.triage.route` | triage node | 1.0 | `intent`, `route` |
 | `metric.knowledge.answered` / `.refused` | knowledge node | 1.0 | `confidence` |
+| `metric.knowledge.steps` | knowledge node (CM-85) | steps-to-answer | `termination` ∈ {answer, give_up, bound, guardrail, no_store} |
+| `metric.knowledge.reformulated` | knowledge node (CM-85) | reformulation count | — |
 | `metric.maintenance.dedup` | maintenance node | 1.0 | `outcome` ∈ {new, duplicate}, `category`, `is_repeat` |
 | `metric.vendor.auto_dispatch` / `.hitl` | vendor node | 1.0 | `category`, `vendor_id` |
 | `metric.escalation.legal_flag` | escalation node (only when flagged) | 1.0 | `category`, `severity` |

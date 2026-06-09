@@ -373,6 +373,34 @@ the retrieved set before they reach `output`.
 assert >25% self-service resolution and <1% hallucination using the stub model
 (reproducible in CI); the real-LLM eval is opt-in behind `OPENAI_API_KEY`.
 
+### Iterative reasoning loop (CM-83 / CM-84 / CM-85)
+
+The single retrieve→answer step above is wrapped in a bounded **plan-execute
+loop** (`agents/knowledge/planner.py`). Instead of refusing on the first
+low-confidence retrieval, the agent reasons about the evidence and, when it
+isn't grounded, **reformulates** the query (or issues a follow-up sub-question),
+runs another hybrid retrieval, accumulates unique chunks across hops
+(`retrieval.merge_unique`), and decides — `answer` / `reformulate` /
+`search_more` / `give_up` — via a `DecisionModel` (`get_decision_model`, the same
+env seam as the answerer). Termination is **dynamic**: the loop ends when the
+policy answers/gives up, or on the hard `KNOWLEDGE_MAX_STEPS` bound (default 4) /
+a guardrail trip. The per-iteration guardrail check + `search_count`/`cost_so_far`
+accounting bound the inner loop just as they bound the spine. `get_knowledge_planner`
+returns the real `LLMKnowledgePlanner` with a key, else a deterministic
+`StubKnowledgePlanner` (a fixed 2-hop trajectory) for offline CI.
+
+**Trajectory observability (CM-85):** each iteration emits a
+`langgraph.node.knowledge.step` span (`step_index`, `decision`, `query`,
+`top_similarity`, `request_id`) nested under the node span; the node emits
+`metric.knowledge.steps` (steps-to-answer, with `termination`) and
+`metric.knowledge.reformulated` (count). **Trajectory eval:**
+`tests/eval/knowledge_multihop_seed.jsonl` + `agents/eval/multihop.py` — a
+deterministic offline test (`tests/knowledge/test_eval_multihop.py`) gates
+hallucination + asserts the step-trace shape with the stub planner, while
+**resolution lift** (multi-hop answers single-shot refused) and an **LLM-judge**
+groundedness score are reported live-only diagnostics (opt-in behind
+`OPENAI_API_KEY`), mirroring the CM-30 triage eval split.
+
 ---
 
 ## 10. Vendor Agent (`agents/vendor/`, CM-35)
