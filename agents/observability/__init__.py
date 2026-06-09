@@ -41,6 +41,9 @@ from .instrumentation import instrument_fastapi_app, register_auto_instrumentati
 from .logging import configure_logging
 from .metrics import (
     METRIC_ACK_LATENCY,
+    METRIC_COORDINATOR_STEPS,
+    METRIC_COORDINATOR_SUBTASKS,
+    METRIC_COORDINATOR_TOOL_CALLS,
     METRIC_ESCALATION_LEGAL_FLAG,
     METRIC_FOLLOWUP,
     METRIC_HITL_RATING,
@@ -61,6 +64,9 @@ from .spans import TRACER_NAME, langgraph_node_span
 
 __all__ = [
     "METRIC_ACK_LATENCY",
+    "METRIC_COORDINATOR_STEPS",
+    "METRIC_COORDINATOR_SUBTASKS",
+    "METRIC_COORDINATOR_TOOL_CALLS",
     "METRIC_ESCALATION_LEGAL_FLAG",
     "METRIC_FOLLOWUP",
     "METRIC_HITL_RATING",

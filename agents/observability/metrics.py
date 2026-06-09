@@ -41,6 +41,12 @@ METRIC_HITL_RATING = "metric.hitl.rating"
 # CM-46: outcome-metric lifecycle signals (need resolved-ticket data).
 METRIC_TTM_RESOLUTION_MS = "metric.ttm_resolution_ms"
 METRIC_FOLLOWUP = "metric.followup"
+# CM-90: Coordinator (Track B) trajectory metrics — sub-task count (planned vs
+# resolved), trajectory length, and per-tool call volume, so the "compound
+# requests no longer drop sub-tasks" claim is dashboardable in production.
+METRIC_COORDINATOR_SUBTASKS = "metric.coordinator.subtasks"
+METRIC_COORDINATOR_STEPS = "metric.coordinator.steps"
+METRIC_COORDINATOR_TOOL_CALLS = "metric.coordinator.tool_calls"
 
 
 def emit_metric(name: str, value: float = 1.0, **attrs: Any) -> None:
