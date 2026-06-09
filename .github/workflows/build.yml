@@ -51,10 +51,9 @@ jobs:
             python:
               - 'agents/**'
               - 'functions/**'
-              - 'tests/observability/**'
-              - 'tests/orchestrator/**'
-              - 'tests/knowledge/**'
-              - 'tests/__init__.py'
+              # CM-93: cover every test dir (was only observability/orchestrator/
+              # knowledge), so tests-only PRs still run pytest + ruff/mypy.
+              - 'tests/**'
               - 'pyproject.toml'
               - 'requirements-lock.txt'
               - '.python-version'
