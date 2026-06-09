@@ -33,6 +33,9 @@ from langgraph.types import interrupt
 
 from agents.knowledge import get_knowledge_planner
 from agents.observability import (
+    METRIC_COORDINATOR_STEPS,
+    METRIC_COORDINATOR_SUBTASKS,
+    METRIC_COORDINATOR_TOOL_CALLS,
     METRIC_ESCALATION_LEGAL_FLAG,
     METRIC_FOLLOWUP,
     METRIC_HITL_RATING,
@@ -227,6 +230,32 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             synthesis.held_for_review,
             result.route,
             mask_pii(synthesis.reply[:160]),
+        )
+
+        # CM-90: trajectory metrics. ``subtasks`` carries the attempted count +
+        # how many *resolved* (not skipped/refused/no_vendor/error) — the headline
+        # "compound requests no longer drop sub-tasks" signal vs the old single
+        # route. ``steps`` is the trajectory length; ``tool_calls`` is one event
+        # per specialist invoked so per-tool volume is dashboardable. Metadata
+        # only (no message content) so the emits stay PII-safe.
+        _UNRESOLVED = ("skipped", "refused", "no_vendor", "error")
+        resolved = 0
+        for obs in result.sub_results:
+            res = obs.get("result", {}) if isinstance(obs, dict) else {}
+            status = res.get("status") or (res.get("output") or {}).get("status")
+            if status not in _UNRESOLVED:
+                resolved += 1
+            emit_metric(METRIC_COORDINATOR_TOOL_CALLS, tool=obs.get("tool"))
+        emit_metric(
+            METRIC_COORDINATOR_SUBTASKS,
+            value=float(len(result.sub_results)),
+            resolved=resolved,
+            held=synthesis.held_for_review,
+        )
+        emit_metric(
+            METRIC_COORDINATOR_STEPS,
+            value=float(result.steps),
+            termination=result.termination,
         )
 
         output: dict[str, Any] = {

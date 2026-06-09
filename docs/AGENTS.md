@@ -94,6 +94,17 @@ knowledge maintenance escalation guardrail_terminated|
     is **validated against the sub-results** (it cannot invent a code or citation,
     and falls back to the template on drift). The legal-gate invariant holds: an
     escalation is reflected as *held* (`output.held_for_review`), never as sent.
+  - **Eval + metrics (CM-90)**: the non-deterministic trajectory is measured by
+    **sub-task coverage** — % of expected sub-tasks addressed in the final reply
+    (`agents.coordinator.eval.subtask_coverage`) — scored over a compound-request
+    golden set (`tests/eval/coordinator_seed.jsonl`). Coverage is the **deterministic
+    gate** (`tests/coordinator/test_eval_coordinator.py` asserts 100% on the
+    `StubCoordinatorPlanner`); an **LLM-judge** on plan/answer quality is a
+    **diagnostic only** (operator CLI `infra/scripts/eval-coordinator.py`, behind
+    `OPENAI_API_KEY`), mirroring the CM-30/CM-39 triage split. The node emits
+    `metric.coordinator.subtasks` (attempted + `resolved`), `metric.coordinator.steps`
+    (trajectory length), and one `metric.coordinator.tool_calls` per specialist
+    invoked — see [`OBSERVABILITY.md`](OBSERVABILITY.md).
 * **Vendor (CM-35)**: `maintenance -> vendor`. The vendor node either
   auto-dispatches and ends, or routes to `hitl_review` for manager approval
   (`agents.orchestrator.graph._vendor_router` on `routes[-1]`).

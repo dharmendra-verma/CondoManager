@@ -26,6 +26,7 @@ openinference and Traceloop.
 > | CM-44 | HITL manager ratings → `metric.hitl.rating` |
 > | CM-45 | PRD-metric dashboards (workbook panel group + Langfuse/LangSmith) |
 > | CM-46 | Remaining PRD metric emits + TTM/follow-up outcome metrics |
+> | CM-90 | Coordinator trajectory metrics → `metric.coordinator.{subtasks,steps,tool_calls}` |
 
 The OpenTelemetry **backend** (Application Insights) lands in CM-22 — for
 CM-21, leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset and spans go to the
@@ -333,6 +334,20 @@ so dev traffic now populates them. CM-45 added a fifth panel group — the
 | **Latency p50 / p95 / p99** | Per-operation latency percentiles, 5-minute buckets | `requests` (FastAPI handlers — CM-21 OTel auto-instrumentation) |
 | **Error rate per LangGraph node** | Per-node error percentage, hourly | `dependencies` where `customDimensions['langgraph.node']` is set |
 | **HITL queue depth** | Cumulative `hitl.queued` − `hitl.resolved`, 5-minute buckets | `customEvents` named `hitl.queued` / `hitl.resolved` (contract — see below) |
+| **Coordinator sub-task coverage** (CM-90) | Resolved ÷ attempted sub-tasks per trajectory — the "compound requests no longer drop sub-tasks" signal | `customEvents` named `metric.coordinator.subtasks` (`metric.value` = attempted, `resolved` attr) |
+| **Coordinator trajectory length** (CM-90) | Distribution of steps per compound request, split by `termination` | `customEvents` named `metric.coordinator.steps` |
+| **Coordinator tool mix** (CM-90) | Per-specialist call volume from coordinated trajectories | `customEvents` named `metric.coordinator.tool_calls`, grouped by `tool` |
+
+> **Coordinator trajectory metrics (CM-90).** The `coordinator` node emits, per
+> compound request: `metric.coordinator.subtasks` (`metric.value` = sub-tasks
+> attempted, `resolved` attr = how many produced a usable outcome — not
+> skipped/refused/no_vendor/error — plus a `held` flag), `metric.coordinator.steps`
+> (`metric.value` = trajectory length, `termination` attr), and one
+> `metric.coordinator.tool_calls` event per specialist invoked (`tool` attr). All
+> carry `request_id` + `tenant_id` (CM-21 correlation) and are metadata-only
+> (PII-safe). The offline coverage gate that backs the dashboard claim lives in
+> `tests/coordinator/test_eval_coordinator.py`; the live operator eval is
+> `infra/scripts/eval-coordinator.py` (behind `OPENAI_API_KEY`).
 
 ### KQL queries — canonical source
 
