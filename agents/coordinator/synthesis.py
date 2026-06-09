@@ -93,7 +93,8 @@ class _Segment:
 
 def _result_status(result: dict[str, Any]) -> str:
     """The sub-result's own status, whether top-level or nested under ``output``."""
-    nested = result.get("output") if isinstance(result.get("output"), dict) else {}
+    raw = result.get("output")
+    nested = raw if isinstance(raw, dict) else {}
     return str(result.get("status") or nested.get("status") or "unknown")
 
 
