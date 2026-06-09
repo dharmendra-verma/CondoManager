@@ -15,6 +15,14 @@ Topology::
 CM-33: the Knowledge node answers terminally, but on refusal (low
 confidence) it routes to Maintenance via ``_knowledge_router``.
 
+CM-87 (Track B): triage routes to a new ``coordinator`` node when the
+multi-intent / ambiguity signal fires (else the single-intent routing is
+unchanged). The Coordinator is a pass-through stub today — it re-runs the
+single-route pick and fans into the *same* specialists, so the only spine
+change is the additive ``triage → coordinator → specialist`` path. The real
+decompose loop (B3 / CM-88) replaces the node body without touching this
+builder.
+
 The router reads ``state.routes[-1]`` to pick the next node. Each stub
 node appends its target route name (e.g. ``"knowledge"``) to
 ``state.routes`` so the router fires correctly. When a Stop Rule trips
@@ -97,6 +105,7 @@ def build_graph(
     g: StateGraph[Any, Any, Any, Any] = StateGraph(AgentState)
 
     g.add_node("triage", nodes.triage)
+    g.add_node("coordinator", nodes.coordinator)
     g.add_node("knowledge", nodes.knowledge)
     g.add_node("maintenance", nodes.maintenance)
     g.add_node("vendor", nodes.vendor)
@@ -107,10 +116,27 @@ def build_graph(
     # Entry: START -> triage. Always.
     g.add_edge(START, "triage")
 
-    # Router: triage fans out to one of four downstream nodes (or the
-    # terminal, when its own guardrail tripped).
+    # Router: triage fans out to one specialist (the single-intent fast path),
+    # or — CM-87 — to the ``coordinator`` when the multi-intent / ambiguity
+    # signal fired, or to the terminal when its own guardrail tripped.
     g.add_conditional_edges(
         "triage",
+        _router,
+        {
+            "coordinator": "coordinator",
+            "knowledge": "knowledge",
+            "maintenance": "maintenance",
+            "escalation": "escalation",
+            "guardrail_terminated": "guardrail_terminated",
+        },
+    )
+
+    # CM-87: the Coordinator (pass-through stub) fans into the same specialists
+    # as triage — it re-runs the single-route pick — so the path is additive and
+    # behaviour past this node is identical to the pre-Coordinator spine. The
+    # real B3 loop swaps the node body, not these edges.
+    g.add_conditional_edges(
+        "coordinator",
         _router,
         {
             "knowledge": "knowledge",

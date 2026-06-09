@@ -131,9 +131,9 @@ class EscalationRecord(BaseModel):
 class AgentState(BaseModel):
     """Shared Pydantic state passed between LangGraph nodes.
 
-    14 fields: the original 13 from the CM-28 AC plus ``escalation``
-    (CM-32). Tests assert presence + types. Counters default to 0 so the
-    CM-26 Stop Rules (cost cap $5, search cap 50) start at safe values.
+    15 fields: the original 13 from the CM-28 AC, ``escalation`` (CM-32), and
+    ``sub_intents`` (CM-87). Tests assert presence + types. Counters default to
+    0 so the CM-26 Stop Rules (cost cap $5, search cap 50) start at safe values.
     """
 
     tenant_id: str
@@ -148,6 +148,12 @@ class AgentState(BaseModel):
     intent: Intent | None = None
     urgency: Urgency | None = None
     tone: Tone | None = None
+    # CM-87 (Track B): sub-intents detected by triage when the message is
+    # compound / ambiguous (``TriageClassification.multi_intent`` True). Empty on
+    # the single-intent fast path. Stored as ``Intent`` string values so the
+    # state stays JSON-primitive for the Cosmos checkpointer; the Coordinator
+    # (B3) consumes this to decompose the request.
+    sub_intents: list[str] = Field(default_factory=list)
     history: list[dict[str, Any]] = Field(default_factory=list)
     cost_so_far: float = 0.0
     search_count: int = 0

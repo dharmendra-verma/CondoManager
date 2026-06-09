@@ -74,7 +74,9 @@ from .triage import (
     TriageClassification,
     TriageClassifier,
     get_triage_classifier,
+    needs_coordinator,
     route_for,
+    route_for_intent,
 )
 
 __all__ = [
@@ -113,5 +115,7 @@ __all__ = [
     "get_history_provider",
     "get_manager_notifier",
     "get_triage_classifier",
+    "needs_coordinator",
     "route_for",
+    "route_for_intent",
 ]

@@ -3,11 +3,13 @@
 > Jira: **CM-28** | Epic: CM-Epic 4 (LangGraph Orchestrator) | Phase 0
 
 This is the orchestrator: a `StateGraph(AgentState)` with nodes for triage,
-knowledge, maintenance, escalation, HITL review, and a guardrail-terminated
-terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one at a time without
-touching the spine. **`triage` (CM-30, see §3), `maintenance` (CM-31, see §8),
-and the `vendor` agent that runs after it (CM-35, see §10) are now real**;
-`knowledge` (CM-33, §9) and `escalation` (CM-32) are real too.
+the (CM-87) coordinator, knowledge, maintenance, escalation, HITL review, and a
+guardrail-terminated terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one
+at a time without touching the spine. **`triage` (CM-30, see §3), `maintenance`
+(CM-31, see §8), and the `vendor` agent that runs after it (CM-35, see §10) are
+now real**; `knowledge` (CM-33, §9) and `escalation` (CM-32) are real too. The
+`coordinator` (CM-87, §1) is a pass-through stub until its real loop (B3 / CM-88)
+lands.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
@@ -30,12 +32,14 @@ trivial state updates and the same run produces traces in both
             START
               |
               v
-            triage
-              |
-   +----------+----------+----------+
-   |          |          |          |
-   v          v          v          v
-knowledge maintenance escalation guardrail_terminated
+            triage ----------------+ (multi_intent / ambiguous)
+              |                     v
+              |                 coordinator   (CM-87 pass-through stub)
+              |                     |
+   +----------+----------+----------+----- (single-intent fast path) -----+
+   |          |          |          |                                     |
+   v          v          v          v                                     v
+knowledge maintenance escalation guardrail_terminated  (coordinator fans into the same specialists)
    |          |          |               |
    |          v          |               |
    |        vendor        |               |
@@ -51,6 +55,13 @@ knowledge maintenance escalation guardrail_terminated
 * **Entry**: `START -> triage` (unconditional).
 * **Router**: `agents.orchestrator.graph._router` reads `state.routes[-1]`
   and dispatches. Default is `"triage"` when `routes` is empty.
+* **Coordinator (CM-87, Track B)**: triage routes to `coordinator` instead of a
+  single specialist when the multi-intent / ambiguity signal fires
+  (`TriageClassification.multi_intent`); otherwise the single-intent routing is
+  unchanged. The node is a **pass-through stub** today — it re-runs the
+  single-route pick and fans into the *same* specialists — so the path is purely
+  additive (no regression). The real decompose loop is B3 (CM-88). See
+  [`TRIAGE.md`](TRIAGE.md) §3.
 * **Vendor (CM-35)**: `maintenance -> vendor`. The vendor node either
   auto-dispatches and ends, or routes to `hitl_review` for manager approval
   (`agents.orchestrator.graph._vendor_router` on `routes[-1]`).
@@ -65,8 +76,9 @@ knowledge maintenance escalation guardrail_terminated
 
 ## 2. `AgentState` reference
 
-Pydantic `BaseModel` defined in `agents/orchestrator/state.py`. **14 fields**
-(the CM-28 spine fields plus `escalation`, added by CM-32).
+Pydantic `BaseModel` defined in `agents/orchestrator/state.py`. **15 fields**
+(the CM-28 spine fields plus `escalation` from CM-32 and `sub_intents` from
+CM-87).
 
 > **New here? Read this as a form that travels with one tenant message.** Each
 > node fills in a few fields and passes the whole form to the next node. Nothing
@@ -83,6 +95,7 @@ Pydantic `BaseModel` defined in `agents/orchestrator/state.py`. **14 fields**
 | `intent`       | `Intent \| None`           | `None`           | `maintenance` / `inquiry` / `escalation` / `follow-up` / `unknown`. |
 | `urgency`      | `Urgency \| None`          | `None`           | `emergency` / `high` / `medium` / `low`. |
 | `tone`         | `Tone \| None`             | `None`           | `neutral` / `frustrated` / `angry` / `urgent`. |
+| `sub_intents`  | `list[str]`                | `[]`             | CM-87: distinct sub-intents when triage flags `multi_intent`; empty on the fast path. |
 | `history`      | `list[dict]`               | `[]`             | Conversation history (CM-32 escalation context). |
 | `cost_so_far`  | `float`                    | `0.0`            | USD. Compared to `COST_CAP_USD` (5.0). |
 | `search_count` | `int`                      | `0`              | Compared to `LOOP_CAP` (50). |

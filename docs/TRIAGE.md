@@ -41,11 +41,22 @@ from `AgentState`:
 | `intent`     | `maintenance` / `inquiry` / `escalation` / `follow-up` |
 | `urgency`    | `emergency` / `high` / `medium` / `low` |
 | `tone`       | `neutral` / `frustrated` / `angry` / `urgent` |
+| `multi_intent` | `bool` (default `false`) — CM-87 multi-intent / ambiguity signal |
+| `sub_intents`  | `list[Intent]` (default `[]`) — distinct sub-intents when `multi_intent` |
 | `rationale`  | one-line audit string (default `""`) |
 | `confidence` | `0.0–1.0` (default `1.0`) |
 
 A response that doesn't validate (e.g. the model invents `"complaint"`) raises
 at the model boundary rather than silently mis-routing.
+
+**`multi_intent` (CM-87, Track B).** Set `true` only when the message carries
+more than one distinct actionable request (a repair **and** a separate policy
+question) or is genuinely ambiguous / multi-hop, so one specialist can't fully
+resolve it; `sub_intents` then lists the distinct intents and `intent` stays the
+single most urgent / primary one. It defaults `false` — the single-intent fast
+path is the default — and the prompt is tuned to be conservative so a single
+detailed request never trips the slow path (over-triggering is the main risk;
+it's measured on the route metric, see §3).
 
 ---
 
@@ -65,6 +76,30 @@ strings match the conditional-edge keys in `graph.py` exactly.
 v1 routes **purely by intent**. `urgency` and `tone` are persisted on
 `AgentState` for downstream prioritisation; a tone/urgency → escalation
 override is deferred to CM-32 to avoid premature cross-agent coupling.
+
+`route_for` is the **single-intent** matrix; `route_for_intent(intent)` is the
+same logic on a bare `Intent` (reused by the Coordinator stub, below).
+
+### Coordinator routing (CM-87, Track B)
+
+The triage **node** consults `needs_coordinator(classification)` *before*
+`route_for`: when the multi-intent / ambiguity signal fires it pushes
+`routes=["coordinator"]` instead of a specialist, so the graph router sends the
+request to the new `coordinator` node. Everything else is unchanged — the
+single-intent fast path is byte-identical to the pre-CM-87 spine.
+
+| Signal | Route |
+|--------|-------|
+| `multi_intent == true` (compound / ambiguous / multi-hop) | `coordinator` |
+| `multi_intent == false` (the default) | single specialist via `route_for` |
+
+The `coordinator` node is a **pass-through stub** today (CM-87): it re-runs the
+single-route pick (`route_for_intent(primary_intent)`) and fans into the *same*
+specialist subgraph, so adding it is a no-regression change. The real
+decompose-and-call-tools loop (B3 / CM-88) replaces the node body, not the edge.
+The decision is observable on `metric.triage.route`, which now carries a
+`multi_intent` attribute (so over-triggering — simple messages taking the slow
+path — is measurable). See [`AGENTS.md`](AGENTS.md) §1 for the topology.
 
 ---
 
@@ -89,7 +124,11 @@ def get_triage_classifier() -> TriageClassifier:
   `human`/`escalat` → escalation, else → inquiry/knowledge) so the
   hello-world suite and the credential-free `python -m agents.orchestrator.demo`
   keep working. It will **not** hit the AC #7 >90% bar — that target is the
-  LLM's, asserted by the operator eval CLI.
+  LLM's, asserted by the operator eval CLI. CM-87: it also sets `multi_intent`
+  **conservatively** — only when a conjunction cue (`and` / `also` / `;` / …)
+  co-occurs with either two distinct intent categories or two separate
+  maintenance issues — so the offline path exercises the Coordinator edge with
+  no key while simple messages stay on the fast path.
 
 > **OpenAI vs. Azure OpenAI.** We use plain `ChatOpenAI` + `OPENAI_API_KEY`,
 > matching the CM-23 `langchain_demo` precedent. The Key Vault secret
