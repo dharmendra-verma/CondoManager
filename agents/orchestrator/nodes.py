@@ -182,8 +182,10 @@ def coordinator(state: AgentState) -> dict[str, Any]:
     1. Runs the standard span + guardrail-first contract (a Stop Rule tripped
        *inside* the loop is surfaced as ``guardrail_reason`` and handled here
        exactly like the node's own first-statement check).
-    2. Accumulates the sub-results on ``state.sub_results`` for the B4 synthesis
-       step (CM-89) and bumps the CM-26 counters once for the trajectory.
+    2. Accumulates the sub-results on ``state.sub_results`` and synthesizes them
+       (CM-89, :func:`agents.coordinator.synthesis.get_synthesizer`) into one
+       coherent tenant ``output.reply``; bumps the CM-26 counters once for the
+       trajectory.
     3. **Legal gate (AC #5):** if any sub-result is an escalation, the record is
        persisted + the manager alerted (as the escalation node does), the held
        draft is surfaced but **never** auto-sent, and the trajectory routes
@@ -205,14 +207,26 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             # its own guardrail check.
             return _guardrail_termination(result.guardrail_reason)
 
-        # CM-77-style real-time decision log: metadata only (no message content)
-        # so the live log stream shows the trajectory shape, PII-safe.
+        # CM-89: weave the accumulated sub-results into one coherent tenant reply.
+        # Pure + deterministic offline (template); the LLM weaver behind the key
+        # is validated against the sub-results, so it can never invent a TKT code
+        # or [n] citation. Imported lazily (same seam style as the planner).
+        from agents.coordinator.synthesis import get_synthesizer  # noqa: PLC0415
+        from agents.observability.pii import mask_pii  # noqa: PLC0415
+
+        synthesis = get_synthesizer().synthesize(result.sub_results)
+
+        # CM-77-style real-time decision log: metadata + a PII-masked reply preview
+        # (the reply itself is tenant-facing and stays unmasked in ``output``).
         _log.info(
-            "coordinator decision: steps=%s termination=%s sub_results=%s route=%s",
+            "coordinator decision: steps=%s termination=%s sub_results=%s "
+            "held=%s route=%s reply=%s",
             result.steps,
             result.termination,
             len(result.sub_results),
+            synthesis.held_for_review,
             result.route,
+            mask_pii(synthesis.reply[:160]),
         )
 
         output: dict[str, Any] = {
@@ -220,6 +234,11 @@ def coordinator(state: AgentState) -> dict[str, Any]:
             "sub_results": result.sub_results,
             "steps": result.steps,
             "termination": result.termination,
+            # CM-89: the single coherent reply addressing every sub-task, plus the
+            # held-state flag (legal gate) and any tenant-visible unresolved items.
+            "reply": synthesis.reply,
+            "held_for_review": synthesis.held_for_review,
+            "unresolved": synthesis.unresolved,
         }
         update: dict[str, Any] = {
             "sub_results": result.sub_results,

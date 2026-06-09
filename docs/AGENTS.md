@@ -59,7 +59,7 @@ knowledge maintenance escalation guardrail_terminated|
 * **Entry**: `START -> triage` (unconditional).
 * **Router**: `agents.orchestrator.graph._router` reads `state.routes[-1]`
   and dispatches. Default is `"triage"` when `routes` is empty.
-* **Coordinator (CM-87 routing + CM-88 loop, Track B)**: triage routes to
+* **Coordinator (CM-87 routing + CM-88 loop + CM-89 synthesis, Track B)**: triage routes to
   `coordinator` instead of a single specialist when the multi-intent / ambiguity
   signal fires (`TriageClassification.multi_intent`); otherwise the single-intent
   routing is unchanged. The node (CM-88) runs a **bounded plan-execute reasoning
@@ -78,11 +78,22 @@ knowledge maintenance escalation guardrail_terminated|
     behind `OPENAI_API_KEY` — mirroring `get_triage_classifier` /
     `get_knowledge_planner`.
   - **Accumulation + legal gate**: each tool result is accumulated on
-    `state.sub_results` for the B4 synthesis step (CM-89); per-step
-    `langgraph.node.coordinator.step` spans carry `step_index` / `tool` /
-    `request_id`. If any sub-result is an escalation, the record is held and the
-    trajectory routes through `hitl_review` (nothing auto-sent); otherwise it ends
-    the graph (`coordinator_done`). See [`TRIAGE.md`](TRIAGE.md) §3.
+    `state.sub_results`; per-step `langgraph.node.coordinator.step` spans carry
+    `step_index` / `tool` / `request_id`. If any sub-result is an escalation, the
+    record is held and the trajectory routes through `hitl_review` (nothing
+    auto-sent); otherwise it ends the graph (`coordinator_done`). See
+    [`TRIAGE.md`](TRIAGE.md) §3.
+  - **Synthesis (CM-89)**: the node then weaves the accumulated sub-results into
+    one coherent tenant reply (`agents.coordinator.synthesis`, set on
+    `output.reply`). A **pure, deterministic** template orders held escalations
+    and emergencies first and FYI policy answers last, preserves provenance
+    (`TKT-…` codes, inline `[n]` citations + a Sources list, the "held for manager
+    review" notice), and surfaces any failed tool / `no_vendor` / refusal as an
+    `output.unresolved` note — nothing is silently dropped. `get_synthesizer()` is
+    the same env seam: template offline, an LLM weaver behind `OPENAI_API_KEY` that
+    is **validated against the sub-results** (it cannot invent a code or citation,
+    and falls back to the template on drift). The legal-gate invariant holds: an
+    escalation is reflected as *held* (`output.held_for_review`), never as sent.
 * **Vendor (CM-35)**: `maintenance -> vendor`. The vendor node either
   auto-dispatches and ends, or routes to `hitl_review` for manager approval
   (`agents.orchestrator.graph._vendor_router` on `routes[-1]`).

@@ -1,9 +1,10 @@
-"""``agents.coordinator`` — specialist tools (CM-86) + the plan-execute loop (CM-88).
+"""``agents.coordinator`` — tools (CM-86) + plan-execute loop (CM-88) + synthesis (CM-89).
 
 Track B: CM-86 wraps each specialist agent as a typed
 :class:`~langchain_core.tools.StructuredTool` so the Coordinator can select and
 call it; CM-88 adds the bounded plan-execute reasoning loop that decomposes a
-compound message and drives those tools. The tools are thin, deterministic
+compound message and drives those tools; CM-89 weaves the loop's accumulated
+sub-results into one coherent tenant reply. The tools are thin, deterministic
 adapters over the existing agents — no specialist behaviour changes.
 
 Public API:
@@ -17,6 +18,8 @@ Public API:
   (deterministic stub offline, real LLM ReAct loop behind ``OPENAI_API_KEY``).
 * :class:`CoordinatorPlanner`, :class:`CoordinatorResult`,
   :data:`COORDINATOR_MAX_STEPS` — the planner protocol, its result, and the bound.
+* :func:`synthesize`, :func:`get_synthesizer`, :class:`SynthesisResult` — the
+  CM-89 cross-sub-task response synthesis (pure function + env-driven selector).
 """
 
 from __future__ import annotations
@@ -26,6 +29,11 @@ from .planner import (
     CoordinatorPlanner,
     CoordinatorResult,
     get_planner,
+)
+from .synthesis import (
+    SynthesisResult,
+    get_synthesizer,
+    synthesize,
 )
 from .tools import (
     ALL_TOOLS,
@@ -47,10 +55,13 @@ __all__ = [
     "EscalationToolArgs",
     "KnowledgeToolArgs",
     "MaintenanceToolArgs",
+    "SynthesisResult",
     "VendorToolArgs",
     "escalation_tool",
     "get_planner",
+    "get_synthesizer",
     "knowledge_tool",
     "maintenance_tool",
+    "synthesize",
     "vendor_tool",
 ]
