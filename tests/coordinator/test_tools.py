@@ -34,7 +34,7 @@ from agents.eval.lexical import LexicalRetriever, kb_chunk
 from agents.knowledge.planner import StubKnowledgePlanner
 from agents.maintenance import MaintenanceAgent
 from agents.maintenance.repository import InMemoryTicketRepository
-from agents.orchestrator.escalation import build_record, get_escalation_classifier
+from agents.orchestrator.escalation import HeuristicEscalationClassifier, build_record
 from agents.orchestrator.state import AgentState, Intent, Tone, Urgency
 from agents.vendor import VendorAgent
 from pydantic import BaseModel
@@ -300,11 +300,17 @@ def test_knowledge_tool_offline_refuses() -> None:
 
 def test_escalation_tool_equals_direct(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tools_mod, "_new_record_id", lambda: "esc-FIXED")
+    # CM-92: pin the classifier (as the record-id is pinned) so the tool path and
+    # the direct baseline use the *same* deterministic instance. Otherwise, with a
+    # real OPENAI_API_KEY both default to the LLM classifier and the two
+    # independent classify() calls return different rationale text -> flaky.
+    classifier = HeuristicEscalationClassifier()
+    monkeypatch.setattr(tools_mod, "_escalation_classifier", lambda: classifier)
 
     message = "The mold made me sick and my doctor will be holding you liable."
     tool_result = escalation_tool.invoke({"tenant_id": "t-1", "message": message})
 
-    classification = get_escalation_classifier().classify(message, [])
+    classification = classifier.classify(message, [])
     direct = build_record(
         record_id="esc-FIXED",
         tenant_id="t-1",
