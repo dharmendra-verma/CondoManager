@@ -899,7 +899,7 @@ event — it's a manual manager time study.
 ### The offline eval suite (CM-39)
 
 The runtime metrics measure prod; the **eval suite** gates the same quantities
-offline before ship. `agents.eval.run_suite()` aggregates five per-agent golden
+offline before ship. `agents.eval.run_suite()` aggregates the per-agent golden
 datasets + scorers into one PRD scorecard:
 
 ```bash
@@ -910,6 +910,18 @@ pytest -m eval -q                          # the CI gate (deterministic, no netw
 Add `--live` + `OPENAI_API_KEY` to grade the model-dependent metrics too. The
 full gate → runtime-event → status mapping is the table in
 [`docs/PRODUCTION-READINESS.md`](PRODUCTION-READINESS.md) §2.
+
+**Policy Q&A Knowledge eval (CM-91).** The `policy_qa` case scores the Knowledge
+agent over the owner's 69-row policy Q&A golden set
+(`tests/eval/policy_qa_seed.jsonl`, built from `policy_qa_dataset.csv` by
+`infra/scripts/build-policy-qa-seed.py`). It reuses the deterministic lexical
+doubles, gating **self-service** (≥0.75) and **hallucination** (<0.01) offline
+and **reporting** answer-quality (mean token-F1 vs `expected_answer`); a refusal
+on an answerable question scores 0, so it counts against both. The dedicated
+operator CLI `infra/scripts/eval-policy-qa.py` runs the **live** path against the
+real vector store (prerequisite: the four policies ingested via
+`infra/scripts/ingest.py`) and gates answer-quality, with per-policy /
+per-difficulty / multi-hop breakdowns.
 
 ## What comes next (forward references)
 

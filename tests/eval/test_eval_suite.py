@@ -16,6 +16,7 @@ EXPECTED_AGENTS = {
     "triage",
     "knowledge",
     "knowledge_multihop",
+    "policy_qa",
     "maintenance_dedup",
     "vendor",
     "escalation",
