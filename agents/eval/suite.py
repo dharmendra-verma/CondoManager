@@ -200,6 +200,50 @@ def _eval_knowledge_multihop(live: bool) -> CaseResult:
     )
 
 
+def _eval_policy_qa(live: bool) -> CaseResult:
+    from agents.eval.lexical import LexicalRetriever, kb_chunk  # noqa: PLC0415
+    from agents.eval.policy_qa import (  # noqa: PLC0415
+        HALLUCINATION_TARGET,
+        SELF_SERVICE_TARGET,
+        run_policy_qa_eval,
+    )
+    from agents.knowledge.llm import StubChatModel  # noqa: PLC0415
+
+    # CM-91: the richer policy Q&A set (per-policy/difficulty labels). Like the
+    # knowledge case, the deterministic lexical doubles run both offline and live
+    # (a real vector-store run is the dedicated infra/scripts/eval-policy-qa.py).
+    rows = datasets.load_jsonl(datasets.POLICY_QA_SEED)
+    kb = [
+        kb_chunk(f"{r['outputs']['gold_doc_id']}-{i}", str(r["outputs"]["gold_chunk_text"]))
+        for i, r in enumerate(rows)
+        if r["outputs"]["answerable"]
+    ]
+    retriever = LexicalRetriever(kb)
+    report = run_policy_qa_eval(rows, store=retriever, embedder=retriever, model=StubChatModel())
+    # Self-service + hallucination are the deterministic gates; answer-quality is
+    # reported (the StubChatModel only echoes, so it's gated live by the CLI).
+    return CaseResult(
+        name="policy_qa",
+        metrics=[
+            MetricResult(
+                "policy_qa.self_service",
+                report.self_service,
+                SELF_SERVICE_TARGET,
+                ">=",
+                gated=True,
+            ),
+            MetricResult(
+                "policy_qa.hallucination",
+                report.hallucination,
+                HALLUCINATION_TARGET,
+                "<",
+                gated=True,
+            ),
+            MetricResult("policy_qa.answer_quality", report.answer_quality, None, ">", gated=False),
+        ],
+    )
+
+
 def _eval_maintenance_dedup(live: bool) -> CaseResult:
     from agents.maintenance.dedup import is_duplicate_pair  # noqa: PLC0415
 
@@ -269,6 +313,7 @@ CASES: list[tuple[str, Callable[[bool], CaseResult]]] = [
     ("triage", _eval_triage),
     ("knowledge", _eval_knowledge),
     ("knowledge_multihop", _eval_knowledge_multihop),
+    ("policy_qa", _eval_policy_qa),
     ("maintenance_dedup", _eval_maintenance_dedup),
     ("vendor", _eval_vendor),
     ("escalation", _eval_escalation),

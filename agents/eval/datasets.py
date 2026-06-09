@@ -19,6 +19,9 @@ ESCALATION_SEED = _EVAL_DIR / "escalation_seed.jsonl"
 KNOWLEDGE_SEED = _EVAL_DIR / "knowledge_seed.jsonl"
 # CM-85: multi-hop trajectory eval set (>=2-source / reformulation questions).
 KNOWLEDGE_MULTIHOP_SEED = _EVAL_DIR / "knowledge_multihop_seed.jsonl"
+# CM-91: policy Q&A golden set (the owner's hand-authored CSV -> JSONL via
+# infra/scripts/build-policy-qa-seed.py). Richer per-policy/difficulty labels.
+POLICY_QA_SEED = _EVAL_DIR / "policy_qa_seed.jsonl"
 DEDUP_SEED = _EVAL_DIR / "maintenance_dedup_seed.jsonl"
 VENDOR_SEED = _EVAL_DIR / "vendor_match_seed.jsonl"
 
