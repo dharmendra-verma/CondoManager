@@ -78,7 +78,7 @@ def test_serialization_roundtrip() -> None:
 
 def test_all_ac_fields_present() -> None:
     """Regression — 13 CM-28 fields + ``escalation`` (CM-32) + ``sub_intents``
-    (CM-87) = 15 exact fields."""
+    (CM-87) + ``sub_results`` (CM-88) = 16 exact fields."""
     expected = {
         "tenant_id",
         "request_id",
@@ -89,6 +89,7 @@ def test_all_ac_fields_present() -> None:
         "urgency",
         "tone",
         "sub_intents",  # CM-87
+        "sub_results",  # CM-88
         "history",
         "cost_so_far",
         "search_count",
