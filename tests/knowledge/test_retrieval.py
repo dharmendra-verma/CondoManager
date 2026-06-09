@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from agents.knowledge.models import VectorChunk
-from agents.knowledge.retrieval import retrieve, significant_terms
+from agents.knowledge.models import RetrievedChunk, VectorChunk
+from agents.knowledge.retrieval import merge_unique, retrieve, significant_terms
 
 
 def _vc(doc_id: str, idx: int = 0, text: str = "body") -> VectorChunk:
@@ -105,3 +105,34 @@ def test_top_k_caps_results() -> None:
 def test_empty_corpus_returns_nothing() -> None:
     store = _FakeStore(vector_hits=[], keyword_hits=[])
     assert retrieve("q", tenant_id="t1", store=store, embedder=_FakeEmbedder()) == []
+
+
+# --- CM-84: multi-hop chunk accumulation --------------------------------------
+
+
+def _rc(doc_id: str, *, score: float, similarity: float) -> RetrievedChunk:
+    return RetrievedChunk(chunk=_vc(doc_id), score=score, similarity=similarity)
+
+
+def test_merge_unique_accumulates_distinct_chunks() -> None:
+    hop1 = [_rc("d1", score=0.02, similarity=0.8)]
+    hop2 = [_rc("d2", score=0.01, similarity=0.6)]
+    merged = merge_unique(hop1, hop2)
+    assert {rc.chunk.doc_id for rc in merged} == {"d1", "d2"}
+    # Sorted by RRF score descending — best evidence leads.
+    assert merged[0].chunk.doc_id == "d1"
+
+
+def test_merge_unique_dedupes_keeping_best_score_and_similarity() -> None:
+    # Same chunk id surfaces in two hops with different score/similarity.
+    first = [_rc("d1", score=0.01, similarity=0.55)]
+    second = [_rc("d1", score=0.03, similarity=0.82)]
+    merged = merge_unique(first, second)
+    assert len(merged) == 1
+    assert merged[0].score == 0.03  # higher RRF score kept
+    assert merged[0].similarity == 0.82  # best-across-hops cosine similarity (CM-47)
+
+
+def test_merge_unique_empty_accumulator() -> None:
+    new = [_rc("d1", score=0.02, similarity=0.7)]
+    assert merge_unique([], new) == new

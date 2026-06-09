@@ -22,7 +22,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from agents.knowledge.models import SECRET_PLACEHOLDER
+from agents.knowledge.models import SECRET_PLACEHOLDER, KnowledgeDecision
 from agents.knowledge.retrieval import significant_terms
 
 #: AC: GPT-4o-mini for speed/cost (same model the Triage agent uses).
@@ -155,3 +155,122 @@ def get_chat_model() -> ChatModel:
     if key and key != SECRET_PLACEHOLDER:
         return LLMChatModel()
     return StubChatModel()
+
+
+# --- CM-84: iterative reasoning-loop decision policy -------------------------
+#
+# The decision model is the *policy* the CM-83 loop scaffold left as a seam. On
+# each iteration it sees the question + the passages accumulated so far and picks
+# the next action. A small prompt + a tiny structured output, billed per loop
+# step so the CM-26 cost cap stays honest across hops.
+
+LLM_DECISION_COST_ESTIMATE_USD = 800 * _PROMPT_PER_TOKEN + 60 * _COMPLETION_PER_TOKEN
+
+#: Decision prompt. ``{context}`` is the numbered passages gathered so far;
+#: ``{step}`` / ``{max_steps}`` let the model spend its remaining budget wisely.
+KNOWLEDGE_DECISION_PROMPT = """\
+You are the planner for a condominium knowledge assistant. Decide the NEXT step \
+for answering the tenant's question, given only the passages gathered so far \
+(numbered [1], [2], …). This is step {step} of at most {max_steps}.
+
+Choose exactly one action:
+- answer: the passages are sufficient to answer accurately — stop and answer.
+- reformulate: the passages are close but the query missed; propose a better \
+query (synonyms, simpler phrasing) in `query`.
+- search_more: the question needs an additional fact not yet retrieved; propose \
+a focused follow-up sub-question in `query`.
+- give_up: the corpus clearly will not contain this; stop and refuse.
+
+Rules:
+- Prefer `answer` as soon as the evidence is sufficient; don't over-search.
+- For reformulate/search_more, `query` MUST differ from earlier queries.
+- As the step budget runs low, lean toward `answer` or `give_up`.
+
+Passages gathered so far:
+{context}
+"""
+
+
+class DecisionModel(Protocol):
+    """Chooses the loop's next action over the accumulated passages."""
+
+    #: Estimated USD billed per :meth:`decide` call (0.0 for the offline stub).
+    cost_per_call_usd: float
+
+    def decide(
+        self, question: str, context_blocks: list[str], *, step: int, max_steps: int
+    ) -> KnowledgeDecision:
+        """Pick the next :class:`KnowledgeDecision` for ``question``."""
+        ...
+
+
+class LLMDecisionModel:
+    """Real GPT-4o-mini decision policy with Pydantic-validated structured output."""
+
+    cost_per_call_usd: float = LLM_DECISION_COST_ESTIMATE_USD
+
+    def __init__(
+        self, model: str = DEFAULT_KNOWLEDGE_MODEL, *, temperature: float = 0.0
+    ) -> None:
+        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
+
+        chat_cls: Any = ChatOpenAI
+        self._llm: Any = chat_cls(
+            model=model, temperature=temperature
+        ).with_structured_output(KnowledgeDecision)
+
+    def decide(
+        self, question: str, context_blocks: list[str], *, step: int, max_steps: int
+    ) -> KnowledgeDecision:
+        from langchain_core.messages import (  # noqa: PLC0415  (lazy by design)
+            HumanMessage,
+            SystemMessage,
+        )
+
+        context = "\n\n".join(context_blocks) if context_blocks else "(no passages retrieved yet)"
+        messages = [
+            SystemMessage(
+                content=KNOWLEDGE_DECISION_PROMPT.format(
+                    context=context, step=step + 1, max_steps=max_steps
+                )
+            ),
+            HumanMessage(content=question),
+        ]
+        result = self._llm.invoke(messages)
+        assert isinstance(result, KnowledgeDecision)
+        return result
+
+
+class StubDecisionModel:
+    """Deterministic offline policy — a fixed 2-hop trajectory.
+
+    Step 0 → ``reformulate`` with a query derived from the question's significant
+    terms, so the reformulate → retrieve → accumulate path is exercised with no
+    key; step ≥ 1 → ``answer``. The stub answerer (:class:`StubChatModel`) still
+    decides grounding vs refusal inside ``answer_question``, so a no-evidence run
+    still refuses. Never returns ``give_up`` (kept simple + deterministic).
+    """
+
+    cost_per_call_usd: float = 0.0
+
+    def decide(
+        self, question: str, context_blocks: list[str], *, step: int, max_steps: int
+    ) -> KnowledgeDecision:
+        if step == 0 and max_steps > 1:
+            terms = significant_terms(question)
+            follow_up = " ".join(terms) if terms else question
+            return KnowledgeDecision(
+                action="reformulate", query=follow_up, rationale="stub hop-0 reformulation"
+            )
+        return KnowledgeDecision(action="answer", rationale="stub hop-1 answer")
+
+
+def get_decision_model() -> DecisionModel:
+    """Env-driven selector — real LLM policy when ``OPENAI_API_KEY`` set, else stub.
+
+    Mirrors :func:`get_chat_model`; the ``REPLACE-ME`` placeholder counts as unset.
+    """
+    key = os.environ.get("OPENAI_API_KEY", "").strip()
+    if key and key != SECRET_PLACEHOLDER:
+        return LLMDecisionModel()
+    return StubDecisionModel()
