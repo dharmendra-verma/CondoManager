@@ -37,7 +37,9 @@ from agents.observability import (
     METRIC_FOLLOWUP,
     METRIC_HITL_RATING,
     METRIC_KNOWLEDGE_ANSWERED,
+    METRIC_KNOWLEDGE_REFORMULATED,
     METRIC_KNOWLEDGE_REFUSED,
+    METRIC_KNOWLEDGE_STEPS,
     METRIC_MAINTENANCE_DEDUP,
     METRIC_TRIAGE_ROUTE,
     METRIC_VENDOR_AUTO_DISPATCH,
@@ -195,6 +197,15 @@ def knowledge(state: AgentState) -> dict[str, Any]:
         emit_metric(
             METRIC_KNOWLEDGE_REFUSED if answer.refused else METRIC_KNOWLEDGE_ANSWERED,
             confidence=answer.confidence,
+        )
+        # CM-85: agentic-RAG trajectory shape — steps-to-answer + reformulation
+        # count, with the termination reason as context. Feeds the CM-85
+        # trajectory dashboards; the per-step detail lives in the step spans.
+        emit_metric(
+            METRIC_KNOWLEDGE_STEPS, value=float(result.steps), termination=result.termination
+        )
+        emit_metric(
+            METRIC_KNOWLEDGE_REFORMULATED, value=float(result.reformulations)
         )
 
         update: dict[str, Any] = {

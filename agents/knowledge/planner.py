@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from agents.knowledge.cosmos_store import get_vector_store
-from agents.knowledge.embeddings import default_embedder
+from agents.knowledge.embeddings import Embedder, default_embedder
 from agents.knowledge.llm import (
     ChatModel,
     DecisionModel,
@@ -49,7 +49,7 @@ from agents.knowledge.llm import (
 )
 from agents.knowledge.models import SECRET_PLACEHOLDER, KnowledgeAnswer, RetrievedChunk
 from agents.knowledge.rag import REFUSAL_TEXT, answer_question
-from agents.knowledge.retrieval import merge_unique, retrieve
+from agents.knowledge.retrieval import SearchStore, merge_unique, retrieve
 
 if TYPE_CHECKING:  # avoid an import cycle — orchestrator imports this package
     from agents.orchestrator.state import AgentState
@@ -106,6 +106,12 @@ class PlannerResult:
     as it would for its own first-statement guardrail check. ``cost_usd`` /
     ``searches`` accumulate across iterations so the node can bump the CM-26
     counters once.
+
+    CM-85: ``reformulations`` (count of fresh reformulated/follow-up queries
+    actually issued) and ``termination`` (why the loop ended:
+    ``answer`` / ``give_up`` / ``bound`` / ``guardrail`` / ``no_store``) expose
+    the trajectory shape so the node can emit the steps/reformulated metrics and
+    the trajectory eval can assert it.
     """
 
     answer: KnowledgeAnswer
@@ -113,23 +119,39 @@ class PlannerResult:
     searches: int
     steps: int
     guardrail_reason: str | None = None
+    reformulations: int = 0
+    termination: str = "answer"
 
 
 class KnowledgePlanner(Protocol):
     """Runs the Knowledge RAG flow as a bounded reasoning loop."""
 
-    def run(self, message: str, *, state: AgentState) -> PlannerResult:
-        """Answer ``message`` for ``state``'s tenant, looping per the policy."""
+    def run(
+        self,
+        message: str,
+        *,
+        state: AgentState,
+        store: SearchStore | None = None,
+        embedder: Embedder | None = None,
+    ) -> PlannerResult:
+        """Answer ``message`` for ``state``'s tenant, looping per the policy.
+
+        ``store`` / ``embedder`` default to the env-driven factories (the node
+        path); the CM-85 trajectory eval injects a deterministic retriever to
+        drive the real loop over a synthetic KB.
+        """
         ...
 
 
 class _LoopPlanner:
-    """Shared ``decide -> act -> observe`` loop body.
+    """Shared ``act -> observe -> decide`` loop body.
 
-    Subclasses supply the :class:`~agents.knowledge.llm.ChatModel` via
-    :meth:`_make_model`; the default decision policy (:meth:`_decide`) stops
-    after the first answer, so behaviour is single-pass until Track A2 overrides
-    the policy.
+    Subclasses supply the :class:`~agents.knowledge.llm.ChatModel` answerer via
+    :meth:`_make_model` and the :class:`~agents.knowledge.llm.DecisionModel`
+    policy via :meth:`_make_decider`. Each iteration is wrapped in a
+    ``langgraph.node.knowledge.step`` span (CM-85) carrying ``step_index`` /
+    ``decision`` / ``query`` / ``top_similarity``; the spans nest under the
+    ``knowledge`` node span when run via the orchestrator.
     """
 
     def __init__(self, *, max_steps: int | None = None) -> None:
@@ -147,26 +169,39 @@ class _LoopPlanner:
 
     # -- the loop ---------------------------------------------------------------
 
-    def run(self, message: str, *, state: AgentState) -> PlannerResult:
-        # No store / embedder (offline / dev / CI) -> cannot retrieve, so refuse
-        # WITHOUT any model or network call (the CM-28 no-credentials contract).
-        store = get_vector_store()
-        embedder = default_embedder()
+    def run(
+        self,
+        message: str,
+        *,
+        state: AgentState,
+        store: SearchStore | None = None,
+        embedder: Embedder | None = None,
+    ) -> PlannerResult:
+        # Resolve the retriever — injected (eval) or the env-driven factories
+        # (node path). No store / embedder (offline / dev / CI) -> cannot
+        # retrieve, so refuse WITHOUT any model or network call (CM-28).
+        if store is None:
+            store = get_vector_store()
+        if embedder is None:
+            embedder = default_embedder()
         if store is None or embedder is None:
-            return PlannerResult(_refusal(), 0.0, 0, 0)
+            return PlannerResult(_refusal(), 0.0, 0, 0, termination="no_store")
 
         model = self._make_model()
         decider = self._make_decider()
         searches = 0
         cost = 0.0
         steps = 0
+        reformulations = 0
         accumulated: list[RetrievedChunk] = []
         used_queries: set[str] = set()
         query = message
         final: KnowledgeAnswer | None = None
+        termination = "answer"
 
         # Imported lazily so the knowledge package has no import-time dependency
         # on the orchestrator (which imports this package) — no import cycle.
+        from agents.observability import langgraph_node_span  # noqa: PLC0415
         from agents.orchestrator import guardrails  # noqa: PLC0415
 
         for step in range(self._max_steps):
@@ -187,47 +222,64 @@ class _LoopPlanner:
                     searches,
                     steps,
                     guardrail_reason=gate.reason,
+                    reformulations=reformulations,
+                    termination="guardrail",
                 )
 
-            # Act: retrieve the current query (skip empties / queries already run)
-            # and accumulate unique chunks across hops. Each retrieval counts a
-            # search so the CM-26 loop cap applies to the inner loop too.
-            normalized = query.strip().lower()
-            if normalized and normalized not in used_queries:
-                used_queries.add(normalized)
-                hits = retrieve(
-                    query, tenant_id=state.tenant_id, store=store, embedder=embedder
+            # CM-85: one span per loop iteration, nested under the node span.
+            with langgraph_node_span("knowledge.step", step_index=step) as step_span:
+                # Act: retrieve the current query (skip empties / queries already
+                # run) and accumulate unique chunks across hops. Each retrieval
+                # counts a search so the CM-26 loop cap applies to the inner loop.
+                normalized = query.strip().lower()
+                if normalized and normalized not in used_queries:
+                    used_queries.add(normalized)
+                    hits = retrieve(
+                        query, tenant_id=state.tenant_id, store=store, embedder=embedder
+                    )
+                    searches += 1
+                    cost += KNOWLEDGE_QUERY_EMBED_COST_USD
+                    accumulated = merge_unique(accumulated, hits)
+                steps += 1
+                top_similarity = max(
+                    (rc.similarity for rc in accumulated), default=0.0
                 )
-                searches += 1
-                cost += KNOWLEDGE_QUERY_EMBED_COST_USD
-                accumulated = merge_unique(accumulated, hits)
-            steps += 1
 
-            # Think: choose the next action from the evidence gathered so far.
-            decision = decider.decide(
-                message, _context_blocks(accumulated), step=step, max_steps=self._max_steps
-            )
-            cost += decider.cost_per_call_usd
+                # Think: choose the next action from the evidence gathered so far.
+                decision = decider.decide(
+                    message,
+                    _context_blocks(accumulated),
+                    step=step,
+                    max_steps=self._max_steps,
+                )
+                cost += decider.cost_per_call_usd
 
-            if decision.action == "give_up":
-                final = _refusal()
+                step_span.set_attribute("decision", decision.action)
+                step_span.set_attribute("query", query)
+                step_span.set_attribute("top_similarity", top_similarity)
+
+                if decision.action == "give_up":
+                    final = _refusal()
+                    termination = "give_up"
+                    break
+                if decision.action in ("reformulate", "search_more"):
+                    nxt = decision.query.strip()
+                    if nxt and nxt.lower() not in used_queries:
+                        reformulations += 1
+                        query = decision.query
+                        continue
+                    # No fresh query to run -> nothing more to gather; fall
+                    # through and answer with what we have (no-progress guard).
+
+                # action == "answer" (or a coerced no-op reformulation): synthesize
+                # once over everything accumulated. answer_question scores
+                # confidence as the best similarity across the passed chunks ->
+                # best-across-hops (CM-47), refusing (grounded) when unsupported.
+                final = answer_question(message, accumulated, model=model)
+                if accumulated:
+                    cost += model.cost_per_call_usd
+                termination = "answer"
                 break
-            if decision.action in ("reformulate", "search_more"):
-                nxt = decision.query.strip()
-                if nxt and nxt.lower() not in used_queries:
-                    query = decision.query
-                    continue
-                # No fresh query to run -> nothing more to gather; fall through
-                # and answer with what we already have (avoids a no-progress loop).
-
-            # action == "answer" (or a coerced no-op reformulation): synthesize once
-            # over everything accumulated. answer_question scores confidence as the
-            # best similarity across the passed chunks -> best-across-hops (CM-47),
-            # and refuses (grounded) when nothing supports an answer.
-            final = answer_question(message, accumulated, model=model)
-            if accumulated:
-                cost += model.cost_per_call_usd
-            break
         else:
             # Step bound exhausted without an explicit answer/give_up — synthesize
             # best-effort over what was gathered (or refuse if nothing was found).
@@ -238,9 +290,15 @@ class _LoopPlanner:
             )
             if accumulated:
                 cost += model.cost_per_call_usd
+            termination = "bound"
 
         return PlannerResult(
-            final if final is not None else _refusal(), cost, searches, steps
+            final if final is not None else _refusal(),
+            cost,
+            searches,
+            steps,
+            reformulations=reformulations,
+            termination=termination,
         )
 
 

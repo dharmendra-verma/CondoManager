@@ -108,6 +108,34 @@ def test_zero_cost_refusal_keeps_counters(monkeypatch: pytest.MonkeyPatch) -> No
     assert out["cost_so_far"] == 1.0  # no spend
 
 
+def test_emits_trajectory_metrics(
+    monkeypatch: pytest.MonkeyPatch, in_memory_spans: InMemorySpanExporter
+) -> None:
+    """CM-85: the node emits steps-to-answer + reformulation-count metrics."""
+    answer = KnowledgeAnswer(answer="ok", confidence=0.8, refused=False)
+    _wire(
+        monkeypatch,
+        PlannerResult(
+            answer=answer,
+            cost_usd=0.02,
+            searches=3,
+            steps=3,
+            reformulations=2,
+            termination="answer",
+        ),
+    )
+
+    with with_request_id("r-traj"):
+        nodes.knowledge(_state(search_count=0, cost_so_far=0.0))
+
+    spans = in_memory_spans.get_finished_spans()
+    steps = next(s for s in spans if s.name == "metric.knowledge.steps")
+    assert (steps.attributes or {})["metric.value"] == 3.0
+    assert (steps.attributes or {})["termination"] == "answer"
+    reformulated = next(s for s in spans if s.name == "metric.knowledge.reformulated")
+    assert (reformulated.attributes or {})["metric.value"] == 2.0
+
+
 def test_node_guardrail_short_circuits_before_planner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

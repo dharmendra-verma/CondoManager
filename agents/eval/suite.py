@@ -166,6 +166,40 @@ def _eval_knowledge(live: bool) -> CaseResult:
     )
 
 
+def _eval_knowledge_multihop(live: bool) -> CaseResult:
+    from agents.eval.multihop import run_multihop_eval  # noqa: PLC0415
+
+    report = run_multihop_eval(live=live)
+    # Hallucination is the deterministic CI gate. Resolution lift + the LLM-judge
+    # score are reported diagnostics (~0 / absent offline; meaningful only live).
+    return CaseResult(
+        name="knowledge_multihop",
+        metrics=[
+            MetricResult(
+                "knowledge_multihop.hallucination",
+                report.hallucination_rate,
+                0.01,
+                "<",
+                gated=True,
+            ),
+            MetricResult(
+                "knowledge_multihop.resolution_lift",
+                report.resolution_lift,
+                None,
+                ">",
+                gated=False,
+            ),
+            MetricResult(
+                "knowledge_multihop.judge_score",
+                report.judge_score if report.judge_score is not None else 0.0,
+                None,
+                ">",
+                gated=False,
+            ),
+        ],
+    )
+
+
 def _eval_maintenance_dedup(live: bool) -> CaseResult:
     from agents.maintenance.dedup import is_duplicate_pair  # noqa: PLC0415
 
@@ -234,6 +268,7 @@ def _eval_escalation(live: bool) -> CaseResult:
 CASES: list[tuple[str, Callable[[bool], CaseResult]]] = [
     ("triage", _eval_triage),
     ("knowledge", _eval_knowledge),
+    ("knowledge_multihop", _eval_knowledge_multihop),
     ("maintenance_dedup", _eval_maintenance_dedup),
     ("vendor", _eval_vendor),
     ("escalation", _eval_escalation),

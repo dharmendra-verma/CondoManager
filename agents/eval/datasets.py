@@ -17,6 +17,8 @@ _EVAL_DIR = Path(__file__).resolve().parents[2] / "tests" / "eval"
 TRIAGE_SEED = _EVAL_DIR / "triage_seed.jsonl"
 ESCALATION_SEED = _EVAL_DIR / "escalation_seed.jsonl"
 KNOWLEDGE_SEED = _EVAL_DIR / "knowledge_seed.jsonl"
+# CM-85: multi-hop trajectory eval set (>=2-source / reformulation questions).
+KNOWLEDGE_MULTIHOP_SEED = _EVAL_DIR / "knowledge_multihop_seed.jsonl"
 DEDUP_SEED = _EVAL_DIR / "maintenance_dedup_seed.jsonl"
 VENDOR_SEED = _EVAL_DIR / "vendor_match_seed.jsonl"
 
