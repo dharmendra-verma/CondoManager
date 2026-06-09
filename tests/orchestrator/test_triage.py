@@ -13,17 +13,22 @@ import datetime as dt
 
 import pytest
 from agents.channels.schema import Channel, NormalizedMessage
+from agents.observability import METRIC_TRIAGE_ROUTE, with_request_id
 from agents.orchestrator import AgentState, nodes
 from agents.orchestrator.state import Intent, Tone, Urgency
 from agents.orchestrator.triage import (
+    ROUTE_COORDINATOR,
     HeuristicTriageClassifier,
     LLMTriageClassifier,
     TriageClassification,
     TriageClassifier,
     format_history,
     get_triage_classifier,
+    needs_coordinator,
     route_for,
+    route_for_intent,
 )
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from pydantic import ValidationError
 
 # --- Schema ------------------------------------------------------------------
@@ -148,6 +153,23 @@ def test_llm_classify_returns_parsed_classification() -> None:
     clf = _llm_with_fake(expected)
     result = clf.classify("I demand a manager now", [])
     assert result is expected
+
+
+def test_llm_classify_passes_through_multi_intent() -> None:
+    """CM-87: the LLM path surfaces a multi_intent classification verbatim, so
+    the structured-output contract carries the new signal end-to-end."""
+    expected = TriageClassification(
+        intent=Intent.MAINTENANCE,
+        urgency=Urgency.HIGH,
+        tone=Tone.FRUSTRATED,
+        multi_intent=True,
+        sub_intents=[Intent.MAINTENANCE, Intent.INQUIRY],
+    )
+    clf = _llm_with_fake(expected)
+    result = clf.classify("fix my heater and what is the guest policy", [])
+    assert result.multi_intent is True
+    assert needs_coordinator(result) is True
+    assert result.sub_intents == [Intent.MAINTENANCE, Intent.INQUIRY]
 
 
 def test_llm_classify_rejects_non_model_response() -> None:
@@ -290,3 +312,173 @@ class _HistoryStub:
 
     def recent_tickets(self, tenant_id: str, *, limit: int = 5) -> list[dict]:
         return self._tickets
+
+
+# --- CM-87: multi-intent / ambiguity signal + Coordinator routing ------------
+
+
+def test_classification_multi_intent_defaults_false() -> None:
+    """The single-intent fast path is the default — older callers + the eval
+    golden data don't set the new fields."""
+    c = TriageClassification(
+        intent=Intent.INQUIRY, urgency=Urgency.LOW, tone=Tone.NEUTRAL
+    )
+    assert c.multi_intent is False
+    assert c.sub_intents == []
+
+
+def test_classification_accepts_multi_intent_and_sub_intents() -> None:
+    c = TriageClassification(
+        intent=Intent.MAINTENANCE,
+        urgency=Urgency.HIGH,
+        tone=Tone.FRUSTRATED,
+        multi_intent=True,
+        sub_intents=[Intent.MAINTENANCE, Intent.ESCALATION],
+    )
+    assert c.multi_intent is True
+    assert c.sub_intents == [Intent.MAINTENANCE, Intent.ESCALATION]
+
+
+def test_sub_intents_reject_out_of_enum_value() -> None:
+    """sub_intents reuses the Intent enum, so it can't drift from the schema."""
+    with pytest.raises(ValidationError):
+        TriageClassification(
+            intent=Intent.MAINTENANCE,
+            urgency=Urgency.HIGH,
+            tone=Tone.NEUTRAL,
+            sub_intents=["complaint"],  # type: ignore[list-item]
+        )
+
+
+def test_needs_coordinator_tracks_the_multi_intent_flag() -> None:
+    single = TriageClassification(
+        intent=Intent.MAINTENANCE, urgency=Urgency.LOW, tone=Tone.NEUTRAL
+    )
+    multi = TriageClassification(
+        intent=Intent.MAINTENANCE,
+        urgency=Urgency.LOW,
+        tone=Tone.NEUTRAL,
+        multi_intent=True,
+        sub_intents=[Intent.MAINTENANCE, Intent.ESCALATION],
+    )
+    assert needs_coordinator(single) is False
+    assert needs_coordinator(multi) is True
+
+
+def test_route_for_intent_matches_route_for_for_every_intent() -> None:
+    """The factored-out single-route helper the Coordinator stub reuses must be
+    identical to the classification-level matrix — guarantees no regression."""
+    for intent in Intent:
+        c = TriageClassification(intent=intent, urgency=Urgency.LOW, tone=Tone.NEUTRAL)
+        assert route_for_intent(intent) == route_for(c)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_multi"),
+    [
+        # Compound: two distinct intents joined by a conjunction.
+        ("The sink is leaking and I want to speak to a manager", True),
+        # Compound: two separate maintenance issues.
+        ("The sink is leaking and the heater is broken", True),
+        # Compound: a repair plus a separate policy question.
+        ("my heater is broken, also what is the guest parking policy", True),
+        # Single intent — must stay on the fast path.
+        ("The kitchen sink has a leak", False),
+        ("when does the gym open", False),
+        # A single request phrased as a question must NOT over-trigger.
+        ("can you fix my sink?", False),
+    ],
+)
+def test_heuristic_multi_intent_detection(message: str, expected_multi: bool) -> None:
+    c = HeuristicTriageClassifier().classify(message, [])
+    assert c.multi_intent is expected_multi
+    # sub_intents is populated iff the multi-intent signal fired.
+    assert (len(c.sub_intents) > 0) is expected_multi
+
+
+def test_heuristic_multi_intent_lists_distinct_sub_intents() -> None:
+    c = HeuristicTriageClassifier().classify(
+        "The sink is leaking and I want to speak to a manager", []
+    )
+    assert c.multi_intent is True
+    assert set(c.sub_intents) == {Intent.MAINTENANCE, Intent.ESCALATION}
+
+
+def test_heuristic_single_intent_keeps_sub_intents_empty() -> None:
+    c = HeuristicTriageClassifier().classify("The kitchen sink has a leak", [])
+    assert c.multi_intent is False
+    assert c.sub_intents == []
+
+
+def test_node_routes_to_coordinator_on_multi_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When triage flags multi_intent, the node routes to the Coordinator and
+    persists the primary intent + sub-intents for it to decompose."""
+    fake = _FakeClassifier(
+        TriageClassification(
+            intent=Intent.MAINTENANCE,
+            urgency=Urgency.HIGH,
+            tone=Tone.FRUSTRATED,
+            multi_intent=True,
+            sub_intents=[Intent.MAINTENANCE, Intent.ESCALATION],
+        )
+    )
+    monkeypatch.setattr(nodes, "get_triage_classifier", lambda: fake)
+    monkeypatch.setattr(nodes, "get_history_provider", lambda: _HistoryStub([]))
+
+    out = nodes.triage(_state(raw_message="fix my heater and get me a manager"))
+
+    assert out["routes"] == [ROUTE_COORDINATOR]
+    assert out["intent"] is Intent.MAINTENANCE
+    assert out["sub_intents"] == ["maintenance", "escalation"]
+
+
+def test_node_single_intent_takes_identical_old_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single-intent message routes straight to its specialist (unchanged) and
+    carries no sub-intents."""
+    fake = _FakeClassifier(
+        TriageClassification(
+            intent=Intent.MAINTENANCE, urgency=Urgency.HIGH, tone=Tone.NEUTRAL
+        )
+    )
+    monkeypatch.setattr(nodes, "get_triage_classifier", lambda: fake)
+    monkeypatch.setattr(nodes, "get_history_provider", lambda: _HistoryStub([]))
+
+    out = nodes.triage(_state(raw_message="no hot water"))
+
+    assert out["routes"] == ["maintenance"]
+    assert out["sub_intents"] == []
+
+
+@pytest.mark.parametrize("multi_intent", [True, False])
+def test_node_route_metric_carries_multi_intent(
+    monkeypatch: pytest.MonkeyPatch,
+    in_memory_spans: InMemorySpanExporter,
+    multi_intent: bool,
+) -> None:
+    """AC #5 — ``metric.triage.route`` carries the multi_intent signal both ways."""
+    fake = _FakeClassifier(
+        TriageClassification(
+            intent=Intent.MAINTENANCE,
+            urgency=Urgency.HIGH,
+            tone=Tone.NEUTRAL,
+            multi_intent=multi_intent,
+            sub_intents=[Intent.MAINTENANCE, Intent.ESCALATION] if multi_intent else [],
+        )
+    )
+    monkeypatch.setattr(nodes, "get_triage_classifier", lambda: fake)
+    monkeypatch.setattr(nodes, "get_history_provider", lambda: _HistoryStub([]))
+
+    with with_request_id("r-mi"):
+        nodes.triage(_state(raw_message="x"))
+
+    spans = [
+        s for s in in_memory_spans.get_finished_spans() if s.name == METRIC_TRIAGE_ROUTE
+    ]
+    assert len(spans) == 1
+    assert spans[0].attributes["multi_intent"] is multi_intent
+    expected_route = ROUTE_COORDINATOR if multi_intent else "maintenance"
+    assert spans[0].attributes["route"] == expected_route

@@ -54,8 +54,14 @@ from .escalation import build_record, get_escalation_classifier
 from .escalation_store import get_escalation_store
 from .history import get_history_provider
 from .notify import get_manager_notifier
-from .state import AgentState
-from .triage import get_triage_classifier, route_for
+from .state import AgentState, Intent
+from .triage import (
+    ROUTE_COORDINATOR,
+    get_triage_classifier,
+    needs_coordinator,
+    route_for,
+    route_for_intent,
+)
 
 #: Canonical route name for the guardrail-terminated terminal. The router
 #: in ``graph.py`` maps this to the ``guardrail_terminated`` node.
@@ -114,21 +120,33 @@ def triage(state: AgentState) -> dict[str, Any]:
         message = state.normalized.content if state.normalized is not None else state.raw_message
         classifier = get_triage_classifier()
         result = classifier.classify(message, history)
-        route = route_for(result)
+        # CM-87 (Track B): compound / ambiguous messages route to the Coordinator;
+        # everything else takes the unchanged single-intent fast path. ``route``
+        # is what the graph router (``state.routes[-1]``) reads next.
+        coordinated = needs_coordinator(result)
+        route = ROUTE_COORDINATOR if coordinated else route_for(result)
 
         # CM-39: PRD metric — intent → route (feeds triage-accuracy + routing
         # dashboards; the offline eval gates the same quantity on golden data).
-        emit_metric(METRIC_TRIAGE_ROUTE, intent=result.intent.value, route=route)
+        # CM-87: also carry the multi_intent signal so the Coordinator-vs-fast-path
+        # split (and any over-triggering) is measurable on the route metric.
+        emit_metric(
+            METRIC_TRIAGE_ROUTE,
+            intent=result.intent.value,
+            route=route,
+            multi_intent=result.multi_intent,
+        )
 
         # CM-77: real-time decision log so the Container Apps log stream shows the
         # routing within seconds (Langfuse/App Insights ingestion lags minutes).
         # Metadata only — no message content — so PII never lands in logs;
         # request_id + tenant_id are auto-attached by the JSON formatter.
         _log.info(
-            "triage decision: intent=%s urgency=%s tone=%s route=%s",
+            "triage decision: intent=%s urgency=%s tone=%s multi_intent=%s route=%s",
             result.intent.value,
             result.urgency.value,
             result.tone.value,
+            result.multi_intent,
             route,
         )
 
@@ -136,10 +154,52 @@ def triage(state: AgentState) -> dict[str, Any]:
             "intent": result.intent,
             "urgency": result.urgency,
             "tone": result.tone,
+            # CM-87: persist detected sub-intents (Intent string values) so the
+            # Coordinator can decompose; empty on the single-intent path.
+            "sub_intents": [si.value for si in result.sub_intents],
             "history": history,
             "cost_so_far": state.cost_so_far + classifier.cost_per_call_usd,
             "routes": [route],
         }
+
+
+@observe_node("coordinator")
+def coordinator(state: AgentState) -> dict[str, Any]:
+    """Coordinator node (CM-87, Track B) — **pass-through stub**.
+
+    Reached only when triage flips the multi-intent / ambiguity signal
+    (:func:`~agents.orchestrator.triage.needs_coordinator`). Until B3 (CM-88)
+    lands the real decompose-and-call-tools loop, this is a deterministic
+    pass-through that falls back to today's single-route behaviour: pick the
+    **primary** intent and hand off to its specialist via
+    :func:`~agents.orchestrator.triage.route_for_intent`. The message therefore
+    reaches the *same* specialist (and the same downstream edges) it would have
+    without the Coordinator edge — so adding this node is a no-regression spine
+    change that CI can prove green before any real coordination behaviour exists.
+
+    Honours the standard node contract: the trace span + the CM-26 guardrail
+    check run first, exactly like every other node.
+    """
+    with langgraph_node_span("coordinator", tenant_id=state.tenant_id):
+        gate = guardrails.check(state)
+        if gate.tripped:
+            return _guardrail_termination(gate.reason)
+
+        # Primary intent was set by triage; default to UNKNOWN (→ knowledge,
+        # which can ask a clarifying question) if somehow unset.
+        primary = state.intent or Intent.UNKNOWN
+        route = route_for_intent(primary)
+
+        # CM-77-style real-time decision log: make the stub fall-through visible
+        # in the live log stream. Metadata only (no message content) — PII-safe.
+        _log.info(
+            "coordinator (stub) decision: primary_intent=%s sub_intents=%s route=%s",
+            primary.value,
+            state.sub_intents,
+            route,
+        )
+
+        return {"routes": [route]}
 
 
 @observe_node("knowledge")

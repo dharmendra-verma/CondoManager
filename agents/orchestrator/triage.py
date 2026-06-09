@@ -84,6 +84,27 @@ class TriageClassification(BaseModel):
     # AC. Defaults to 1.0 so the heuristic classifier (which is certain about
     # its keyword matches) doesn't have to set it.
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    # CM-87 (Track B): multi-intent / ambiguity signal. ``True`` when the message
+    # carries more than one actionable request (a repair AND a policy question),
+    # or is genuinely ambiguous / multi-hop, so a single specialist can't fully
+    # handle it — this is what flips routing to the Coordinator. Defaults
+    # ``False`` so the single-intent fast path is the default and older callers
+    # (and the eval golden data) don't have to set it.
+    multi_intent: bool = Field(
+        default=False,
+        description=(
+            "True only when the message has more than one actionable request or "
+            "is genuinely ambiguous/multi-hop; otherwise false."
+        ),
+    )
+    # CM-87: the distinct sub-intents detected when ``multi_intent`` is True
+    # (e.g. ``[maintenance, escalation]`` for "fix my heater AND I want a
+    # manager"). Empty on the single-intent path. Reuses the ``Intent`` enum so
+    # it can never drift from the schema; ``intent`` remains the primary pick.
+    sub_intents: list[Intent] = Field(
+        default_factory=list,
+        description="Distinct sub-intents when multi_intent is true; else empty.",
+    )
 
 
 # --- Prompt ------------------------------------------------------------------
@@ -127,6 +148,15 @@ tone    — {_TONE_CHOICES}
   - frustrated: mild annoyance or impatience.
   - angry: explicit anger, hostility, or ALL-CAPS venting.
   - urgent: pressing/panicked language regardless of politeness.
+
+multi_intent — true / false
+  Set true ONLY when the message contains more than one distinct actionable \
+request (e.g. a repair AND a separate policy question), or is genuinely \
+ambiguous / multi-hop so a single specialist cannot fully resolve it. When \
+true, list the distinct intents in sub_intents (drawn from the intent menu \
+above) and still set intent to the single most urgent / primary one. Be \
+conservative: one request — even a long, detailed one — is NOT multi_intent, \
+and false is the default.
 
 Tenant's recent ticket history:
 {{history}}
@@ -238,6 +268,39 @@ class HeuristicTriageClassifier:
     _ESCALATION_CUES = ("human", "escalat", "manager", "unacceptable", "lawyer")
     _EMERGENCY_CUES = ("emergency", "flood", "fire", "gas", "pouring", "burst")
     _FOLLOWUP_CUES = ("follow up", "following up", "ticket #", "any update", "status of")
+    # CM-87: question/inquiry cues, used only for multi-intent detection (the
+    # primary-intent ladder below still defaults to INQUIRY). Kept narrow so a
+    # plain question doesn't look like a second intent on its own.
+    _INQUIRY_CUES = ("policy", "rule", "hours", "allowed", "how much", "what time")
+    # CM-87: conjunction / compound cues. ``multi_intent`` requires one of these
+    # PLUS evidence of a second request, so a single detailed request — even one
+    # phrased as a question — never trips the slow path. This is the deliberately
+    # conservative reading of the AC ("conjunction cues + multiple intent keywords").
+    _CONJUNCTION_CUES = (" and ", " also ", "additionally", " plus ", "; ", " as well", " then ")
+
+    def _detect_multi_intent(self, m: str) -> tuple[bool, list[Intent]]:
+        """Detect compound / ambiguous messages from keyword cues (CM-87).
+
+        Returns ``(multi_intent, sub_intents)``. ``multi_intent`` is True only
+        when a conjunction cue co-occurs with either two distinct intent
+        categories or two separate maintenance issues — conservative by design
+        so simple messages stay on the single-intent fast path. ``sub_intents``
+        lists the distinct categories whose cues fired, in routing priority.
+        """
+        detected: list[Intent] = []
+        if any(cue in m for cue in self._ESCALATION_CUES):
+            detected.append(Intent.ESCALATION)
+        if any(cue in m for cue in self._FOLLOWUP_CUES):
+            detected.append(Intent.FOLLOW_UP)
+        maint_hits = sum(cue in m for cue in self._MAINTENANCE_CUES)
+        if maint_hits:
+            detected.append(Intent.MAINTENANCE)
+        if any(cue in m for cue in self._INQUIRY_CUES):
+            detected.append(Intent.INQUIRY)
+
+        has_conjunction = any(cue in m for cue in self._CONJUNCTION_CUES)
+        multi_intent = has_conjunction and (len(detected) >= 2 or maint_hits >= 2)
+        return multi_intent, (detected if multi_intent else [])
 
     def classify(self, message: str, history: list[dict[str, Any]]) -> TriageClassification:
         m = (message or "").lower()
@@ -250,6 +313,8 @@ class HeuristicTriageClassifier:
             intent = Intent.MAINTENANCE
         else:
             intent = Intent.INQUIRY
+
+        multi_intent, sub_intents = self._detect_multi_intent(m)
 
         if any(cue in m for cue in self._EMERGENCY_CUES):
             urgency = Urgency.EMERGENCY
@@ -277,6 +342,8 @@ class HeuristicTriageClassifier:
             intent=intent,
             urgency=urgency,
             tone=tone,
+            multi_intent=multi_intent,
+            sub_intents=sub_intents,
             rationale="heuristic keyword match (no LLM)",
         )
 
@@ -298,6 +365,12 @@ def get_triage_classifier() -> TriageClassifier:
 
 # --- Routing (AC #6) ---------------------------------------------------------
 
+#: CM-87 (Track B): the node name triage routes to when the multi-intent /
+#: ambiguity signal fires. Matches the conditional-edge key + node name in
+#: ``agents.orchestrator.graph`` and the ``coordinator`` stub node in
+#: ``agents.orchestrator.nodes``.
+ROUTE_COORDINATOR: str = "coordinator"
+
 # Intent -> downstream node name. The values MUST match the conditional-edge
 # keys in ``agents.orchestrator.graph.build_graph`` ("knowledge" /
 # "maintenance" / "escalation"). ``follow-up`` routes to maintenance (the
@@ -312,6 +385,17 @@ _ROUTE_BY_INTENT: dict[Intent, str] = {
 }
 
 
+def route_for_intent(intent: Intent) -> str:
+    """Return the single-intent downstream node name for a bare ``Intent``.
+
+    The primary routing matrix, factored out of :func:`route_for` so the
+    CM-87 ``coordinator`` stub can reuse the *exact* single-route behaviour
+    when it falls back to today's path (pick the primary intent → its
+    specialist), guaranteeing no regression vs the pre-Coordinator spine.
+    """
+    return _ROUTE_BY_INTENT[intent]
+
+
 def route_for(classification: TriageClassification) -> str:
     """Return the downstream node name for a classification (AC #6).
 
@@ -319,5 +403,22 @@ def route_for(classification: TriageClassification) -> str:
     ``AgentState`` for downstream prioritisation. A tone/urgency → escalation
     override is deferred to CM-32 (Escalation Agent) to avoid premature
     cross-agent coupling.
+
+    This is the **single-intent** matrix only; the multi-intent / Coordinator
+    decision is :func:`needs_coordinator`, applied by the triage node before
+    this is consulted.
     """
-    return _ROUTE_BY_INTENT[classification.intent]
+    return route_for_intent(classification.intent)
+
+
+def needs_coordinator(classification: TriageClassification) -> bool:
+    """True when triage should hand off to the Coordinator instead of one
+    specialist (CM-87, AC #2).
+
+    Fires on the multi-intent / ambiguity signal — a compound request, or a
+    genuinely ambiguous / multi-hop message (including ``intent=unknown`` with a
+    multi-hop signal) that a single specialist can't fully handle; the
+    classifier captures all of these in ``multi_intent``. The single-intent
+    fast path (the default, ``multi_intent`` False) is left untouched.
+    """
+    return classification.multi_intent
