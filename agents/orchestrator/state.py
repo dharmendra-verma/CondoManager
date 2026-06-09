@@ -131,9 +131,10 @@ class EscalationRecord(BaseModel):
 class AgentState(BaseModel):
     """Shared Pydantic state passed between LangGraph nodes.
 
-    15 fields: the original 13 from the CM-28 AC, ``escalation`` (CM-32), and
-    ``sub_intents`` (CM-87). Tests assert presence + types. Counters default to
-    0 so the CM-26 Stop Rules (cost cap $5, search cap 50) start at safe values.
+    16 fields: the original 13 from the CM-28 AC, ``escalation`` (CM-32),
+    ``sub_intents`` (CM-87), and ``sub_results`` (CM-88). Tests assert presence +
+    types. Counters default to 0 so the CM-26 Stop Rules (cost cap $5, search cap
+    50) start at safe values.
     """
 
     tenant_id: str
@@ -154,6 +155,13 @@ class AgentState(BaseModel):
     # state stays JSON-primitive for the Cosmos checkpointer; the Coordinator
     # (B3) consumes this to decompose the request.
     sub_intents: list[str] = Field(default_factory=list)
+    # CM-88 (Track B): the ordered specialist-tool results the Coordinator
+    # accumulated across its plan-execute trajectory — each a
+    # ``{"tool": <name>, "result": <verbatim tool output>}`` record. Empty on
+    # every path except a Coordinator run. The B4 synthesis step (CM-89) consumes
+    # this to compose one tenant-facing reply; kept JSON-primitive so it survives
+    # the Cosmos checkpointer.
+    sub_results: list[dict[str, Any]] = Field(default_factory=list)
     history: list[dict[str, Any]] = Field(default_factory=list)
     cost_so_far: float = 0.0
     search_count: int = 0

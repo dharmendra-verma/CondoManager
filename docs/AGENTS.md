@@ -8,8 +8,8 @@ guardrail-terminated terminal. CM-30 / CM-31 / CM-32 replace the stub bodies one
 at a time without touching the spine. **`triage` (CM-30, see §3), `maintenance`
 (CM-31, see §8), and the `vendor` agent that runs after it (CM-35, see §10) are
 now real**; `knowledge` (CM-33, §9) and `escalation` (CM-32) are real too. The
-`coordinator` (CM-87, §1) is a pass-through stub until its real loop (B3 / CM-88)
-lands.
+`coordinator` (CM-87 routing + CM-88 loop, §1) is now a real bounded plan-execute
+agent that decomposes compound messages and calls the B1 specialist tools.
 
 The hello-world demo runs without OpenAI credentials. Stub nodes return
 trivial state updates and the same run produces traces in both
@@ -34,34 +34,55 @@ trivial state updates and the same run produces traces in both
               v
             triage ----------------+ (multi_intent / ambiguous)
               |                     v
-              |                 coordinator   (CM-87 pass-through stub)
-              |                     |
-   +----------+----------+----------+----- (single-intent fast path) -----+
-   |          |          |          |                                     |
-   v          v          v          v                                     v
-knowledge maintenance escalation guardrail_terminated  (coordinator fans into the same specialists)
-   |          |          |               |
-   |          v          |               |
-   |        vendor        |               |
-   |        /    \        v               |
-   |   (auto)  (approve) hitl_review       |
-   |      |         \____/  |              |
-   +------+----------------+---------------+
+              |                 coordinator  ── plan-execute loop, calls B1 tools
+              |                     |             inline (maintenance / vendor /
+              |                     |             knowledge / escalation)
+              |                     +───────────────┐
+              |                     |               | (escalation sub-result)
+   +----------+----------+----------+--- (fast)     v
+   |          |          |          |          hitl_review
+   v          v          v          v               |
+knowledge maintenance escalation guardrail_terminated|
+   |          |          |               |           |
+   |          v          |               |           |
+   |        vendor        |               |           |
+   |        /    \        v               |           |
+   |   (auto)  (approve) hitl_review       |           |
+   |      |         \____/  |              |           |
+   +------+----------------+--------------+-----------+
                          |
                          v
                         END
+  (coordinator ends at END when satisfied, or holds an escalation for hitl_review)
 ```
 
 * **Entry**: `START -> triage` (unconditional).
 * **Router**: `agents.orchestrator.graph._router` reads `state.routes[-1]`
   and dispatches. Default is `"triage"` when `routes` is empty.
-* **Coordinator (CM-87, Track B)**: triage routes to `coordinator` instead of a
-  single specialist when the multi-intent / ambiguity signal fires
-  (`TriageClassification.multi_intent`); otherwise the single-intent routing is
-  unchanged. The node is a **pass-through stub** today — it re-runs the
-  single-route pick and fans into the *same* specialists — so the path is purely
-  additive (no regression). The real decompose loop is B3 (CM-88). See
-  [`TRIAGE.md`](TRIAGE.md) §3.
+* **Coordinator (CM-87 routing + CM-88 loop, Track B)**: triage routes to
+  `coordinator` instead of a single specialist when the multi-intent / ambiguity
+  signal fires (`TriageClassification.multi_intent`); otherwise the single-intent
+  routing is unchanged. The node (CM-88) runs a **bounded plan-execute reasoning
+  loop** (`agents.coordinator.planner`): it decomposes the message into sub-tasks
+  (from the triage `sub_intents`), then runs an observe→think→act loop that
+  selects a B1 specialist *tool* each step and calls it inline — a
+  non-deterministic trajectory whose length depends on the message.
+  - **Bounded + guarded**: a hard `COORDINATOR_MAX_STEPS` (default 8, env
+    override) bound, `guardrails.check` every iteration (a mid-loop trip
+    short-circuits to `guardrail_terminated`), and `cost_so_far` / `search_count`
+    accrual so the CM-26 caps apply to the whole trajectory.
+  - **Dynamic termination**: the loop ends when every sub-task is satisfied (not
+    a fixed hop count), or on the bound / a guardrail trip.
+  - **Env seam**: `get_planner()` returns a deterministic `StubCoordinatorPlanner`
+    offline (CI green, no key) and the real LLM ReAct `LLMCoordinatorPlanner`
+    behind `OPENAI_API_KEY` — mirroring `get_triage_classifier` /
+    `get_knowledge_planner`.
+  - **Accumulation + legal gate**: each tool result is accumulated on
+    `state.sub_results` for the B4 synthesis step (CM-89); per-step
+    `langgraph.node.coordinator.step` spans carry `step_index` / `tool` /
+    `request_id`. If any sub-result is an escalation, the record is held and the
+    trajectory routes through `hitl_review` (nothing auto-sent); otherwise it ends
+    the graph (`coordinator_done`). See [`TRIAGE.md`](TRIAGE.md) §3.
 * **Vendor (CM-35)**: `maintenance -> vendor`. The vendor node either
   auto-dispatches and ends, or routes to `hitl_review` for manager approval
   (`agents.orchestrator.graph._vendor_router` on `routes[-1]`).

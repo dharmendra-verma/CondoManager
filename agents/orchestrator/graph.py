@@ -17,11 +17,12 @@ confidence) it routes to Maintenance via ``_knowledge_router``.
 
 CM-87 (Track B): triage routes to a new ``coordinator`` node when the
 multi-intent / ambiguity signal fires (else the single-intent routing is
-unchanged). The Coordinator is a pass-through stub today — it re-runs the
-single-route pick and fans into the *same* specialists, so the only spine
-change is the additive ``triage → coordinator → specialist`` path. The real
-decompose loop (B3 / CM-88) replaces the node body without touching this
-builder.
+unchanged). CM-88 fills the node with the real plan-execute loop: it calls the
+B1 specialist *tools* inline (not the specialist graph nodes), so it is
+terminal-ish — it ends the graph when the trajectory is satisfied
+(``coordinator_done`` → END), holds an escalation sub-result for ``hitl_review``
+(the legal gate), or short-circuits to ``guardrail_terminated`` on a mid-loop
+Stop Rule.
 
 The router reads ``state.routes[-1]`` to pick the next node. Each stub
 node appends its target route name (e.g. ``"knowledge"``) to
@@ -131,18 +132,20 @@ def build_graph(
         },
     )
 
-    # CM-87: the Coordinator (pass-through stub) fans into the same specialists
-    # as triage — it re-runs the single-route pick — so the path is additive and
-    # behaviour past this node is identical to the pre-Coordinator spine. The
-    # real B3 loop swaps the node body, not these edges.
+    # CM-88: the real Coordinator calls the B1 specialist *tools* inline within
+    # its plan-execute loop (it does not hand off to the specialist graph nodes),
+    # so it is terminal-ish: it ends the graph once the trajectory is satisfied
+    # (``coordinator_done`` -> END), holds an escalation sub-result for manager
+    # review (``hitl_review`` — the legal gate), or short-circuits to the terminal
+    # when a Stop Rule trips mid-loop (``guardrail_terminated``). The accumulated
+    # sub-results live on ``state.sub_results`` for B4 synthesis (CM-89).
     g.add_conditional_edges(
         "coordinator",
         _router,
         {
-            "knowledge": "knowledge",
-            "maintenance": "maintenance",
-            "escalation": "escalation",
+            "hitl_review": "hitl_review",
             "guardrail_terminated": "guardrail_terminated",
+            "coordinator_done": END,
         },
     )
 
