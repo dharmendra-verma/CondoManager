@@ -123,3 +123,28 @@ def _fuse(
         RetrievedChunk(chunk=c, score=scores[c.id], similarity=sims[c.id])
         for c in ranked[:top_k]
     ]
+
+
+def merge_unique(
+    acc: list[RetrievedChunk], new: list[RetrievedChunk]
+) -> list[RetrievedChunk]:
+    """Accumulate retrieved chunks across CM-84 multi-hop retrievals.
+
+    Dedupes by ``chunk.id`` and, when the same chunk surfaces in more than one
+    hop, keeps the higher RRF ``score`` **and** the higher ``similarity`` seen —
+    a later, better-phrased query can rank a chunk higher, and confidence must be
+    the best-across-hops cosine similarity (CM-47). The result is sorted by
+    ``score`` descending so the most-relevant evidence leads the synthesis prompt.
+    """
+    by_id: dict[str, RetrievedChunk] = {}
+    for rc in (*acc, *new):
+        prev = by_id.get(rc.chunk.id)
+        if prev is None:
+            by_id[rc.chunk.id] = rc
+        else:
+            by_id[rc.chunk.id] = RetrievedChunk(
+                chunk=rc.chunk,
+                score=max(prev.score, rc.score),
+                similarity=max(prev.similarity, rc.similarity),
+            )
+    return sorted(by_id.values(), key=lambda rc: rc.score, reverse=True)

@@ -169,3 +169,28 @@ class KnowledgeAnswer(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
     refused: bool = False
+
+
+#: The actions the CM-84 reasoning loop can take on each iteration.
+KnowledgeAction = Literal["answer", "reformulate", "search_more", "give_up"]
+
+
+class KnowledgeDecision(BaseModel):
+    """CM-84: the loop's per-iteration decision (LLM-validated structured output).
+
+    Given the question plus the passages accumulated so far, the decision model
+    picks an :data:`KnowledgeAction`:
+
+    * ``answer`` — the evidence is sufficient; synthesize the final answer and stop.
+    * ``reformulate`` — re-phrase the query (synonyms / decomposition) and retrieve again.
+    * ``search_more`` — issue a follow-up sub-question (multi-hop) and retrieve again.
+    * ``give_up`` — nothing will ground an answer; refuse.
+
+    ``query`` carries the next query for ``reformulate`` / ``search_more`` (ignored
+    otherwise). ``rationale`` is a short free-text reason, useful for the per-step
+    trace CM-85 will surface.
+    """
+
+    action: KnowledgeAction
+    query: str = ""
+    rationale: str = ""

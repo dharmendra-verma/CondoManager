@@ -2,16 +2,23 @@
 
 Jira: CM-83  | Epic: Track A (Knowledge iterative reasoning)  | Phase 1
 
-Today's Knowledge flow is single-shot: ``retrieve`` -> ``answer_question`` ->
-refuse below :data:`~agents.knowledge.models.CONFIDENCE_THRESHOLD`. This module
-wraps that flow in a bounded ``decide -> act -> observe`` loop so a later story
-(Track A2) can let the agent "try harder" by swapping only the **decision
-policy** — the loop structure, the hard step bound, the per-iteration guardrail
-check, and the search/cost accounting all live here and stay put.
+CM-83 wrapped the single-shot ``retrieve`` -> ``answer_question`` flow in a
+bounded ``act -> observe -> decide`` loop, leaving the **decision policy** as a
+seam. CM-84 fills that seam with real agentic behaviour: each iteration retrieves
+(reusing the original or a reformulated query), accumulates unique chunks across
+hops, and asks a :class:`~agents.knowledge.llm.DecisionModel` what to do next —
+``answer`` (synthesize over everything gathered and stop), ``reformulate`` /
+``search_more`` (run another hybrid retrieval with a new query), or ``give_up``
+(refuse). Termination is **dynamic**: the loop ends when the policy answers /
+gives up, or on the hard ``KNOWLEDGE_MAX_STEPS`` bound / a guardrail trip — not
+after a fixed number of hops.
 
-The default policy is **"answer once, then stop"**, so the loop runs exactly one
-iteration and the output is byte-identical to the pre-CM-83 single-shot path
-(pinned by a stub-equals-legacy golden test).
+The loop structure, the step bound, the per-iteration guardrail check, and the
+search/cost accounting all live here and stay put; only the policy is
+non-deterministic. The offline :class:`StubKnowledgePlanner` pairs a deterministic
+:class:`~agents.knowledge.llm.StubDecisionModel` (a fixed 2-hop trajectory) with
+the :class:`~agents.knowledge.llm.StubChatModel`, so the whole loop is testable
+with no key.
 
 Selector convention mirrors :func:`~agents.knowledge.llm.get_chat_model` and
 ``get_triage_classifier``: :func:`get_knowledge_planner` returns the real
@@ -32,10 +39,17 @@ from typing import TYPE_CHECKING, Protocol
 
 from agents.knowledge.cosmos_store import get_vector_store
 from agents.knowledge.embeddings import default_embedder
-from agents.knowledge.llm import ChatModel, StubChatModel, get_chat_model
-from agents.knowledge.models import SECRET_PLACEHOLDER, KnowledgeAnswer
+from agents.knowledge.llm import (
+    ChatModel,
+    DecisionModel,
+    StubChatModel,
+    StubDecisionModel,
+    get_chat_model,
+    get_decision_model,
+)
+from agents.knowledge.models import SECRET_PLACEHOLDER, KnowledgeAnswer, RetrievedChunk
 from agents.knowledge.rag import REFUSAL_TEXT, answer_question
-from agents.knowledge.retrieval import retrieve
+from agents.knowledge.retrieval import merge_unique, retrieve
 
 if TYPE_CHECKING:  # avoid an import cycle — orchestrator imports this package
     from agents.orchestrator.state import AgentState
@@ -74,20 +88,13 @@ def _refusal() -> KnowledgeAnswer:
     return KnowledgeAnswer(answer=REFUSAL_TEXT, confidence=0.0, refused=True)
 
 
-def _prefer(current: KnowledgeAnswer | None, candidate: KnowledgeAnswer) -> KnowledgeAnswer:
-    """Keep the best grounded answer seen so far.
+def _context_blocks(chunks: list[RetrievedChunk]) -> list[str]:
+    """Number the accumulated chunks as ``"[n] text"``.
 
-    A non-refused answer always beats a refusal; among grounded answers the
-    higher confidence wins. When every iteration refuses, the first refusal is
-    retained so the fallback is still a well-formed :class:`KnowledgeAnswer`.
+    The shared context format used by both the decision prompt and
+    ``answer_question`` so passage numbers line up across the loop.
     """
-    if current is None:
-        return candidate
-    if candidate.refused:
-        return current
-    if current.refused or candidate.confidence > current.confidence:
-        return candidate
-    return current
+    return [f"[{i + 1}] {rc.chunk.text}" for i, rc in enumerate(chunks)]
 
 
 @dataclass(frozen=True)
@@ -134,9 +141,9 @@ class _LoopPlanner:
         """Return the answerer. Created lazily, only once retrieval is possible."""
         raise NotImplementedError
 
-    def _decide(self, answer: KnowledgeAnswer, step: int) -> bool:
-        """Return ``True`` to stop the loop. Default policy: stop after one pass."""
-        return True
+    def _make_decider(self) -> DecisionModel:
+        """Return the decision policy. Created lazily, alongside the answerer."""
+        raise NotImplementedError
 
     # -- the loop ---------------------------------------------------------------
 
@@ -149,10 +156,14 @@ class _LoopPlanner:
             return PlannerResult(_refusal(), 0.0, 0, 0)
 
         model = self._make_model()
+        decider = self._make_decider()
         searches = 0
         cost = 0.0
         steps = 0
-        best: KnowledgeAnswer | None = None
+        accumulated: list[RetrievedChunk] = []
+        used_queries: set[str] = set()
+        query = message
+        final: KnowledgeAnswer | None = None
 
         # Imported lazily so the knowledge package has no import-time dependency
         # on the orchestrator (which imports this package) — no import cycle.
@@ -171,50 +182,91 @@ class _LoopPlanner:
             gate = guardrails.check(loop_state)
             if gate.tripped:
                 return PlannerResult(
-                    best if best is not None else _refusal(),
+                    final if final is not None else _refusal(),
                     cost,
                     searches,
                     steps,
                     guardrail_reason=gate.reason,
                 )
 
-            # Act: one retrieval (always counts a search) + one grounded answer.
-            retrieved = retrieve(
-                message, tenant_id=state.tenant_id, store=store, embedder=embedder
-            )
-            searches += 1
-            cost += KNOWLEDGE_QUERY_EMBED_COST_USD
-            answer = answer_question(message, retrieved, model=model)
-            # Bill the LLM only when it was actually invoked (retrieved non-empty);
-            # a vector search ran either way. Matches the legacy single-shot cost.
-            if retrieved:
-                cost += model.cost_per_call_usd
+            # Act: retrieve the current query (skip empties / queries already run)
+            # and accumulate unique chunks across hops. Each retrieval counts a
+            # search so the CM-26 loop cap applies to the inner loop too.
+            normalized = query.strip().lower()
+            if normalized and normalized not in used_queries:
+                used_queries.add(normalized)
+                hits = retrieve(
+                    query, tenant_id=state.tenant_id, store=store, embedder=embedder
+                )
+                searches += 1
+                cost += KNOWLEDGE_QUERY_EMBED_COST_USD
+                accumulated = merge_unique(accumulated, hits)
             steps += 1
 
-            # Observe: keep the best grounded answer, then consult the policy.
-            best = _prefer(best, answer)
-            if self._decide(answer, step):
-                break
+            # Think: choose the next action from the evidence gathered so far.
+            decision = decider.decide(
+                message, _context_blocks(accumulated), step=step, max_steps=self._max_steps
+            )
+            cost += decider.cost_per_call_usd
 
-        return PlannerResult(best if best is not None else _refusal(), cost, searches, steps)
+            if decision.action == "give_up":
+                final = _refusal()
+                break
+            if decision.action in ("reformulate", "search_more"):
+                nxt = decision.query.strip()
+                if nxt and nxt.lower() not in used_queries:
+                    query = decision.query
+                    continue
+                # No fresh query to run -> nothing more to gather; fall through
+                # and answer with what we already have (avoids a no-progress loop).
+
+            # action == "answer" (or a coerced no-op reformulation): synthesize once
+            # over everything accumulated. answer_question scores confidence as the
+            # best similarity across the passed chunks -> best-across-hops (CM-47),
+            # and refuses (grounded) when nothing supports an answer.
+            final = answer_question(message, accumulated, model=model)
+            if accumulated:
+                cost += model.cost_per_call_usd
+            break
+        else:
+            # Step bound exhausted without an explicit answer/give_up — synthesize
+            # best-effort over what was gathered (or refuse if nothing was found).
+            final = (
+                answer_question(message, accumulated, model=model)
+                if accumulated
+                else _refusal()
+            )
+            if accumulated:
+                cost += model.cost_per_call_usd
+
+        return PlannerResult(
+            final if final is not None else _refusal(), cost, searches, steps
+        )
 
 
 class StubKnowledgePlanner(_LoopPlanner):
-    """Deterministic offline loop — forces the :class:`StubChatModel`.
+    """Deterministic offline loop — the no-credentials / CI path.
 
-    The no-credentials / CI path. Single-pass by default, so its output mirrors
-    the legacy single-shot RAG flow exactly (the stub-equals-legacy golden test).
+    Pairs the :class:`~agents.knowledge.llm.StubDecisionModel` (a fixed 2-hop
+    trajectory) with the :class:`~agents.knowledge.llm.StubChatModel`, so the full
+    reformulate -> retrieve -> accumulate -> answer loop is exercised with no key.
     """
 
     def _make_model(self) -> ChatModel:
         return StubChatModel()
 
+    def _make_decider(self) -> DecisionModel:
+        return StubDecisionModel()
+
 
 class LLMKnowledgePlanner(_LoopPlanner):
-    """Real LLM-driven loop — uses the GPT-4o-mini answerer via the env seam."""
+    """Real LLM-driven loop — GPT-4o-mini answerer + decision policy via the seams."""
 
     def _make_model(self) -> ChatModel:
         return get_chat_model()
+
+    def _make_decider(self) -> DecisionModel:
+        return get_decision_model()
 
 
 def get_knowledge_planner() -> KnowledgePlanner:
