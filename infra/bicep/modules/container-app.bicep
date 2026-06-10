@@ -110,6 +110,15 @@ param azureOpenAiApiVersion string = '2024-10-21'
 @description('Shared building-wide policy partition(s) for the Knowledge RAG (CM-97), emitted as POLICY_TENANT_ID (comma-separated). The policy corpus lives under its own tenantId, distinct from the asking tenant; retrieval queries the caller partition PLUS these, so policy questions resolve regardless of who asks. Empty (default) keeps caller-only scoping.')
 param policyTenantId string = ''
 
+@description('Azure AI Search endpoint for the policy RAG store (CM-100). Emitted as AZURE_SEARCH_ENDPOINT. Empty (default) keeps the Knowledge agent on the Cosmos store. Requires azureSearchKeyKvSecretUri + identity to take effect (fail-closed).')
+param azureSearchEndpoint string = ''
+
+@description('Azure AI Search index name for the policy corpus (CM-100). Emitted as AZURE_SEARCH_INDEX. Only used when the AI Search env vars are set.')
+param azureSearchIndex string = 'condo-policies'
+
+@description('Key Vault secret URI for the Azure AI Search admin/query key (CM-100). Emitted as AZURE_SEARCH_KEY via secretRef. Empty (default) keeps AI Search off, so the agent stays on Cosmos until the key is seeded and this is set. Requires userAssignedIdentityId + a non-empty azureSearchEndpoint.')
+param azureSearchKeyKvSecretUri string = ''
+
 @description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
 param registryServer string = ''
 
@@ -146,6 +155,10 @@ var hasLangfuse = hasIdentity && !empty(langfusePublicKeyKvSecretUri) && !empty(
 // the API key (secretRef, resolved by the MI). Require both + identity so a
 // half-config never mounts a key with no endpoint (or an endpoint with no key).
 var hasAzureOpenAi = hasIdentity && !empty(azureOpenAiEndpoint) && !empty(azureOpenAiKeyKvSecretUri)
+// CM-100: the policy RAG store switches to Azure AI Search only when BOTH the
+// endpoint (plaintext) and the key (secretRef, MI-resolved) are set — fail-closed
+// so a half-config never mounts; until then the agent stays on the Cosmos store.
+var hasAzureSearch = hasIdentity && !empty(azureSearchEndpoint) && !empty(azureSearchKeyKvSecretUri)
 // A private ACR pull needs the MI: Container Apps resolves the registry
 // `identity` against AcrPull at revision start. Without an identity we can only
 // pull public images (the hello-world default), so omit the registries block.
@@ -224,6 +237,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             name: 'azure-openai-key'
             identity: userAssignedIdentityId
             keyVaultUrl: azureOpenAiKeyKvSecretUri
+          }
+        ] : [],
+        // CM-100: Azure AI Search admin/query key for the policy RAG store,
+        // resolved from KV via the MI (same pattern as the Azure OpenAI key).
+        hasAzureSearch ? [
+          {
+            name: 'azure-search-key'
+            identity: userAssignedIdentityId
+            keyVaultUrl: azureSearchKeyKvSecretUri
           }
         ] : []
       )
@@ -352,7 +374,25 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 name: 'POLICY_TENANT_ID'
                 value: policyTenantId
               }
-            ]
+            ],
+            // CM-100: Azure AI Search policy store. Endpoint + index are plaintext;
+            // the key comes via secretRef (MI-resolved). Only emitted when both the
+            // endpoint and the key URI are set (hasAzureSearch) — else the agent
+            // stays on the Cosmos store (get_search_store() returns None).
+            hasAzureSearch ? [
+              {
+                name: 'AZURE_SEARCH_ENDPOINT'
+                value: azureSearchEndpoint
+              }
+              {
+                name: 'AZURE_SEARCH_INDEX'
+                value: azureSearchIndex
+              }
+              {
+                name: 'AZURE_SEARCH_KEY'
+                secretRef: 'azure-search-key'
+              }
+            ] : []
           )
         }
       ]
