@@ -33,10 +33,11 @@ Design (mirrors the planner / chat-model seams):
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+from agents.chat import build_chat_model, llm_configured
 
 #: CM-18 Key Vault seed placeholder; treated as if-unset (same convention as the
 #: planner / triage / knowledge selectors).
@@ -383,7 +384,6 @@ class LLMSynthesizer:
             HumanMessage,
             SystemMessage,
         )
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
 
         system = SystemMessage(
             content=(
@@ -396,7 +396,8 @@ class LLMSynthesizer:
             )
         )
         human = HumanMessage(content="\n\n---\n\n".join(s for s in baseline_sections(baseline)))
-        llm: Any = ChatOpenAI(model=self._model, temperature=0.0)
+        # CM-79: shared factory → Azure OpenAI in prod / OpenAI direct locally.
+        llm: Any = build_chat_model(self._model, temperature=0.0)
         return str(llm.invoke([system, human]).content)
 
 
@@ -406,12 +407,12 @@ def baseline_sections(baseline: SynthesisResult) -> list[str]:
 
 
 def get_synthesizer() -> Synthesizer:
-    """Env-driven selector — LLM weaver when ``OPENAI_API_KEY`` set, else template.
+    """Env-driven selector — LLM weaver when one is configured, else template.
 
-    Same convention as ``get_planner`` / ``get_chat_model``; the ``REPLACE-ME``
-    placeholder counts as unset.
+    Same convention as ``get_planner`` / ``get_chat_model``; provider detection
+    (Azure OpenAI or OpenAI direct) lives in :func:`agents.chat.llm_configured`
+    (CM-79).
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMSynthesizer()
     return TemplateSynthesizer()

@@ -28,11 +28,12 @@ LLM-authored drafts are a possible follow-up.
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
+
+from agents.chat import build_chat_model, llm_configured
 
 from .state import EscalationCategory, EscalationRecord, Tone, Urgency
 
@@ -131,11 +132,10 @@ class LLMEscalationClassifier:
     def __init__(
         self, model: str = DEFAULT_ESCALATION_MODEL, *, temperature: float = 0.0
     ) -> None:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
-
+        # CM-79: shared factory → Azure OpenAI in prod / OpenAI direct locally.
         self._model = model
-        self._llm = ChatOpenAI(
-            model=model, temperature=temperature
+        self._llm = build_chat_model(
+            model, temperature=temperature
         ).with_structured_output(EscalationClassification)
 
     def classify(
@@ -218,13 +218,14 @@ class HeuristicEscalationClassifier:
 
 
 def get_escalation_classifier() -> EscalationClassifier:
-    """LLM when ``OPENAI_API_KEY`` is set, else the deterministic heuristic.
+    """Real LLM when one is configured (CM-79), else the deterministic heuristic.
 
     Mirrors CM-30's ``get_triage_classifier`` and CM-28's ``get_checkpointer``
     so tests + ``python -m agents.orchestrator.demo`` run with no credentials.
+    Provider detection (Azure OpenAI or OpenAI direct) lives in
+    :func:`agents.chat.llm_configured`.
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMEscalationClassifier()
     return HeuristicEscalationClassifier()
 

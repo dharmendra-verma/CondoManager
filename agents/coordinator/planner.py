@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from pydantic import BaseModel, Field
 
+from agents.chat import build_chat_model, llm_configured
 from agents.coordinator.tools import (
     escalation_tool,
     knowledge_tool,
@@ -553,11 +554,9 @@ class LLMCoordinatorPolicy:
     def __init__(
         self, model: str = DEFAULT_COORDINATOR_MODEL, *, temperature: float = 0.0
     ) -> None:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
-
-        chat_cls: Any = ChatOpenAI
-        self._llm: Any = chat_cls(
-            model=model, temperature=temperature
+        # CM-79: shared factory → Azure OpenAI in prod / OpenAI direct locally.
+        self._llm: Any = build_chat_model(
+            model, temperature=temperature
         ).with_structured_output(_NextStep)
 
     def next_action(
@@ -594,13 +593,13 @@ class LLMCoordinatorPolicy:
 
 
 def get_planner() -> CoordinatorPlanner:
-    """Env-driven selector — real LLM loop when ``OPENAI_API_KEY`` set, else stub.
+    """Env-driven selector — real LLM loop when one is configured, else stub.
 
     Same convention as ``get_chat_model`` / ``get_triage_classifier`` /
-    ``get_knowledge_planner``; the ``REPLACE-ME`` placeholder counts as unset.
+    ``get_knowledge_planner``; provider detection (Azure OpenAI or OpenAI direct)
+    lives in :func:`agents.chat.llm_configured` (CM-79).
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMCoordinatorPlanner()
     return StubCoordinatorPlanner()
 

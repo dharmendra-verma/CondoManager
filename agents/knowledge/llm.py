@@ -16,13 +16,13 @@ control the AC requires.
 
 from __future__ import annotations
 
-import os
 import re
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from agents.knowledge.models import SECRET_PLACEHOLDER, KnowledgeDecision
+from agents.chat import build_chat_model, llm_configured
+from agents.knowledge.models import KnowledgeDecision
 from agents.knowledge.retrieval import significant_terms
 
 #: AC: GPT-4o-mini for speed/cost (same model the Triage agent uses).
@@ -84,13 +84,9 @@ class LLMChatModel:
     def __init__(
         self, model: str = DEFAULT_KNOWLEDGE_MODEL, *, temperature: float = 0.0
     ) -> None:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
-
-        # Any-alias so mypy --strict doesn't couple us to the langchain-openai
-        # constructor / Runnable signatures.
-        chat_cls: Any = ChatOpenAI
-        self._llm: Any = chat_cls(
-            model=model, temperature=temperature
+        # CM-79: shared factory → Azure OpenAI in prod / OpenAI direct locally.
+        self._llm: Any = build_chat_model(
+            model, temperature=temperature
         ).with_structured_output(RagModelOutput)
 
     def answer(self, question: str, context_blocks: list[str]) -> RagModelOutput:
@@ -146,13 +142,13 @@ def _first_sentence(block: str) -> str:
 
 
 def get_chat_model() -> ChatModel:
-    """Env-driven selector — real LLM when ``OPENAI_API_KEY`` set, else stub.
+    """Env-driven selector — real LLM when one is configured (CM-79), else stub.
 
     Same convention as CM-30's ``get_triage_classifier`` / CM-28's
-    ``get_checkpointer``; the ``REPLACE-ME`` placeholder counts as unset.
+    ``get_checkpointer``; provider detection (Azure OpenAI or OpenAI direct,
+    ``REPLACE-ME`` counts as unset) lives in :func:`agents.chat.llm_configured`.
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMChatModel()
     return StubChatModel()
 
@@ -212,11 +208,9 @@ class LLMDecisionModel:
     def __init__(
         self, model: str = DEFAULT_KNOWLEDGE_MODEL, *, temperature: float = 0.0
     ) -> None:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
-
-        chat_cls: Any = ChatOpenAI
-        self._llm: Any = chat_cls(
-            model=model, temperature=temperature
+        # CM-79: shared factory → Azure OpenAI in prod / OpenAI direct locally.
+        self._llm: Any = build_chat_model(
+            model, temperature=temperature
         ).with_structured_output(KnowledgeDecision)
 
     def decide(
@@ -266,11 +260,11 @@ class StubDecisionModel:
 
 
 def get_decision_model() -> DecisionModel:
-    """Env-driven selector — real LLM policy when ``OPENAI_API_KEY`` set, else stub.
+    """Env-driven selector — real LLM policy when one is configured, else stub.
 
-    Mirrors :func:`get_chat_model`; the ``REPLACE-ME`` placeholder counts as unset.
+    Mirrors :func:`get_chat_model`; provider detection lives in
+    :func:`agents.chat.llm_configured` (CM-79).
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMDecisionModel()
     return StubDecisionModel()

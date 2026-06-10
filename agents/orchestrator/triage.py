@@ -29,10 +29,11 @@ Three public concerns:
 
 from __future__ import annotations
 
-import os
 from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
+
+from agents.chat import build_chat_model, llm_configured
 
 from .state import Intent, Tone, Urgency
 
@@ -219,11 +220,12 @@ class LLMTriageClassifier:
         *,
         temperature: float = 0.0,
     ) -> None:
-        from langchain_openai import ChatOpenAI  # noqa: PLC0415  (lazy by design)
-
+        # CM-79: build via the shared factory so this runs on Azure OpenAI in
+        # prod (reusing the embeddings creds) or OpenAI direct locally; the
+        # factory lazy-imports langchain_openai so the offline path stays cheap.
         self._model = model
-        self._llm = ChatOpenAI(
-            model=model, temperature=temperature
+        self._llm = build_chat_model(
+            model, temperature=temperature
         ).with_structured_output(TriageClassification)
 
     def classify(self, message: str, history: list[dict[str, Any]]) -> TriageClassification:
@@ -363,16 +365,17 @@ class HeuristicTriageClassifier:
 
 
 def get_triage_classifier() -> TriageClassifier:
-    """Env-driven selector — LLM when an OpenAI key is configured, else heuristic.
+    """Env-driven selector — real LLM when one is configured, else heuristic.
 
-    Mirrors CM-28's ``get_checkpointer()``: production wiring sets
-    ``OPENAI_API_KEY`` (sourced from Key Vault) and gets the real classifier;
-    tests and the local demo leave it unset and get the deterministic
-    heuristic, so they run with no credentials and no network. The
-    ``REPLACE-ME`` placeholder is treated as unset (CM-18 convention).
+    Mirrors CM-28's ``get_checkpointer()``: production wiring (CM-79) configures
+    Azure OpenAI (``AZURE_OPENAI_ENDPOINT`` + ``AZURE_OPENAI_API_KEY``, the creds
+    CM-75 already wired for embeddings) — or a developer sets ``OPENAI_API_KEY``
+    — and gets the real GPT-4o-mini classifier; tests and the local demo leave
+    both unset and get the deterministic heuristic, so they run with no
+    credentials and no network. :func:`agents.chat.llm_configured` owns the
+    provider detection (``REPLACE-ME`` counts as unset, CM-18 convention).
     """
-    key = os.environ.get("OPENAI_API_KEY", "").strip()
-    if key and key != SECRET_PLACEHOLDER:
+    if llm_configured():
         return LLMTriageClassifier()
     return HeuristicTriageClassifier()
 
