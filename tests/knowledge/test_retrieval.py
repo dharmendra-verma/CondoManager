@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from agents.knowledge.models import RetrievedChunk, VectorChunk
-from agents.knowledge.retrieval import merge_unique, retrieve, significant_terms
+from agents.knowledge.retrieval import (
+    DEFAULT_FETCH_K,
+    DEFAULT_TOP_K,
+    merge_unique,
+    retrieve,
+    significant_terms,
+)
 
 
 def _vc(doc_id: str, idx: int = 0, text: str = "body") -> VectorChunk:
@@ -105,6 +111,21 @@ def test_top_k_caps_results() -> None:
 def test_empty_corpus_returns_nothing() -> None:
     store = _FakeStore(vector_hits=[], keyword_hits=[])
     assert retrieve("q", tenant_id="t1", store=store, embedder=_FakeEmbedder()) == []
+
+
+def test_default_topk_keeps_chunks_past_the_old_cut() -> None:
+    # CM-99: with the default top_k (8), a chunk ranked 6th–8th — a rule chunk
+    # sitting just behind a document's boilerplate — still reaches the LLM
+    # context, where the old cut of 5 would have dropped it.
+    assert DEFAULT_TOP_K == 8
+    assert DEFAULT_FETCH_K == 20
+    hits = [(_vc(f"d{i}"), 1.0 - 0.05 * i) for i in range(12)]  # 12 ranked candidates
+    store = _FakeStore(vector_hits=hits, keyword_hits=[])
+    out = retrieve("q", tenant_id="t1", store=store, embedder=_FakeEmbedder())
+    ids = [rc.chunk.doc_id for rc in out]
+    assert len(out) == DEFAULT_TOP_K  # 8, not 5
+    assert "d7" in ids  # the 8th-ranked chunk survives (was cut at 5)
+    assert "d8" not in ids  # still bounded by top_k
 
 
 # --- CM-84: multi-hop chunk accumulation --------------------------------------
