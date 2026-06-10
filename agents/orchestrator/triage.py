@@ -271,7 +271,21 @@ class HeuristicTriageClassifier:
     # CM-87: question/inquiry cues, used only for multi-intent detection (the
     # primary-intent ladder below still defaults to INQUIRY). Kept narrow so a
     # plain question doesn't look like a second intent on its own.
-    _INQUIRY_CUES = ("policy", "rule", "hours", "allowed", "how much", "what time")
+    #
+    # CM-94: broadened beyond the literal word "policy". A policy/amenity
+    # question is very often phrased as a *permission* request — "can a tenant
+    # book the banquet hall …", "am I allowed …", "do I need …" — which carries
+    # none of the original keywords, so a compound "repair AND policy-question"
+    # message slipped through to the single-intent maintenance path (the banquet
+    # -hall report that prompted this). The permission phrasings below use
+    # "can i" / "can a" rather than "can you", so a single repair request phrased
+    # as a question ("can you fix my sink?") is NOT mistaken for an inquiry.
+    _INQUIRY_CUES = (
+        "policy", "rule", "hours", "allowed", "how much", "what time",
+        "can i", "can a", "can tenants", "can residents", "may i",
+        "am i allowed", "is it allowed", "do i need", "permitted",
+        "book the", "reserve",
+    )
     # CM-87: conjunction / compound cues. ``multi_intent`` requires one of these
     # PLUS evidence of a second request, so a single detailed request — even one
     # phrased as a question — never trips the slow path. This is the deliberately

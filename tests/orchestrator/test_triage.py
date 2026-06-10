@@ -382,11 +382,24 @@ def test_route_for_intent_matches_route_for_for_every_intent() -> None:
         ("The sink is leaking and the heater is broken", True),
         # Compound: a repair plus a separate policy question.
         ("my heater is broken, also what is the guest parking policy", True),
+        # CM-94: a repair plus a *permission*-style policy question that carries
+        # none of the original inquiry keywords — the banquet-hall report that
+        # regressed to a maintenance-only ticket.
+        (
+            "I am getting leakage from the ceiling. check it urgently and can a "
+            "tenant book the banquet hall without the owner's involvement?",
+            True,
+        ),
+        # CM-94: other permission phrasings paired with a repair also compound.
+        ("the heater is broken and can a resident reserve the rooftop", True),
+        ("my faucet is leaking and am I allowed to sublet", True),
         # Single intent — must stay on the fast path.
         ("The kitchen sink has a leak", False),
         ("when does the gym open", False),
         # A single request phrased as a question must NOT over-trigger.
         ("can you fix my sink?", False),
+        # CM-94: a bare permission question with no second intent stays single.
+        ("can a tenant book the banquet hall?", False),
     ],
 )
 def test_heuristic_multi_intent_detection(message: str, expected_multi: bool) -> None:
