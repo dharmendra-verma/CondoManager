@@ -19,10 +19,15 @@ from agents.knowledge.models import RetrievedChunk, VectorChunk
 
 #: Standard RRF dampening constant — higher = flatter contribution by rank.
 RRF_K = 60
-#: How many results to return after fusion.
-DEFAULT_TOP_K = 5
-#: How many candidates to pull from each retriever before fusing.
-DEFAULT_FETCH_K = 10
+#: How many results to return after fusion (the LLM answer context). CM-99: raised
+#: 5 → 8 so a rule/eligibility chunk that ranks just behind a document's own
+#: boilerplate (header, fee/refund table) still lands in the context the LLM sees,
+#: instead of being cut at 5 and leaving the model to echo the header.
+DEFAULT_TOP_K = 8
+#: How many candidates to pull from each retriever before fusing. CM-99: raised
+#: 10 → 20 so RRF fuses over a deeper candidate pool (and the top_k=8 slice is
+#: drawn from real signal, not a shallow 10-candidate cut).
+DEFAULT_FETCH_K = 20
 
 #: Tiny English stop-list — keyword search is a coarse lexical signal, so we
 #: just drop the highest-frequency words that would match almost any chunk.
