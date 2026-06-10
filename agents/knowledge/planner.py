@@ -33,6 +33,7 @@ and ``guardrails`` is imported lazily inside the loop, so there is no
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
@@ -54,6 +55,11 @@ from agents.knowledge.retrieval import SearchStore, merge_unique, retrieve
 
 if TYPE_CHECKING:  # avoid an import cycle — orchestrator imports this package
     from agents.orchestrator.state import AgentState
+
+#: Module logger — CM-99 retrieval diagnostics emit here (real-time, via the CM-77
+#: JSON stdout config) so the Container Apps log stream shows exactly which chunks
+#: each hop retrieved, to debug prod-vs-local retrieval differences.
+_log = logging.getLogger(__name__)
 
 #: Hard upper bound on loop iterations. Overridable via the ``KNOWLEDGE_MAX_STEPS``
 #: env var; exceeding it terminates the loop and falls back to the best grounded
@@ -261,6 +267,23 @@ class _LoopPlanner:
                 step_span.set_attribute("decision", decision.action)
                 step_span.set_attribute("query", query)
                 step_span.set_attribute("top_similarity", top_similarity)
+
+                # CM-99 diagnostic: log the hop's query (PII-masked) + the chunk
+                # provenance now in context — doc_id#chunk_index@similarity,
+                # metadata only, no chunk text — so we can see exactly what reaches
+                # the LLM (and how the reformulated query differs) in prod vs local.
+                from agents.observability.pii import mask_pii  # noqa: PLC0415
+
+                _log.info(
+                    "knowledge retrieval: hop=%s action=%s query=%s chunks=%s",
+                    step,
+                    decision.action,
+                    mask_pii(query),
+                    [
+                        f"{rc.chunk.doc_id}#{rc.chunk.chunk_index}@{rc.similarity:.3f}"
+                        for rc in accumulated
+                    ],
+                )
 
                 if decision.action == "give_up":
                     final = _refusal()
