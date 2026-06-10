@@ -46,8 +46,19 @@ passage is prefixed with a bracketed number like [1].
 
 Rules:
 - Use ONLY facts stated in the context. Do NOT use outside knowledge or guess.
-- If the answer is not clearly supported by the context, set can_answer=false \
-and leave answer empty — do not fabricate.
+- Answer the question AS ASKED. For yes/no, permission, or conditional questions \
+("can X do Y?", "is X allowed?", "can X without Y?"), give the direct verdict the \
+context supports, including the condition — e.g. if the context says a tenant may \
+book only with the owner's written approval, answer "No — a tenant needs the \
+owner's approval (NOC) to book." (CM-98)
+- The context "supports" an answer whenever its stated rules let you resolve the \
+question, not only when it restates the question verbatim. Do NOT refuse merely \
+because the phrasing is negative or conditional.
+- Set can_answer=false ONLY when the context genuinely does not address the topic \
+— then leave answer empty and do not fabricate.
+- Report figures only with their stated meaning. Do NOT invent status, progress, \
+or completion percentages, and do NOT repurpose numbers from tables or fee \
+schedules as anything other than what the passage says. (CM-98)
 - When you can answer, write a concise, direct answer and list the passage \
 numbers you relied on in used_chunks (e.g. [2] -> 2).
 
