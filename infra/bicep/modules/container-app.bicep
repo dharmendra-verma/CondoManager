@@ -101,6 +101,12 @@ param azureOpenAiEndpoint string = ''
 @description('Key Vault secret URI for the Azure OpenAI API key (CM-75). Emitted as AZURE_OPENAI_API_KEY via secretRef. Empty string (default) omits the Azure OpenAI env vars. Requires userAssignedIdentityId (to resolve the secretRef) and a non-empty azureOpenAiEndpoint.')
 param azureOpenAiKeyKvSecretUri string = ''
 
+@description('Azure OpenAI chat deployment name for the agent LLM seams (CM-79). Emitted as AZURE_OPENAI_CHAT_DEPLOYMENT (only when the Azure OpenAI env vars above are set). Defaults to the gpt-4o-mini deployment on the shared Azure OpenAI resource; the agents read it via agents/chat.py.')
+param azureOpenAiChatDeployment string = 'gpt-4o-mini'
+
+@description('Azure OpenAI data-plane API version for chat (CM-79). Emitted as AZURE_OPENAI_API_VERSION (only when the Azure OpenAI env vars are set). A GA version that supports tool/function calling — required for the agent structured outputs.')
+param azureOpenAiApiVersion string = '2024-10-21'
+
 @description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
 param registryServer string = ''
 
@@ -286,6 +292,11 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             // over policies-vector). Without these, default_embedder() returns None
             // and every policy question refuses -> Maintenance. Endpoint is
             // plaintext; the API key comes via secretRef (MI-resolved from KV).
+            // CM-79: the same endpoint + key now also back the chat LLM seams
+            // (triage / knowledge / coordinator / synthesis / escalation) via
+            // agents/chat.py — AZURE_OPENAI_CHAT_DEPLOYMENT + AZURE_OPENAI_API_VERSION
+            // name the chat deployment so prod runs the real GPT-4o-mini instead of
+            // the offline stubs/heuristics. No new secret (reuses azure-openai-key).
             hasAzureOpenAi ? [
               {
                 name: 'AZURE_OPENAI_ENDPOINT'
@@ -294,6 +305,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               {
                 name: 'AZURE_OPENAI_API_KEY'
                 secretRef: 'azure-openai-key'
+              }
+              {
+                name: 'AZURE_OPENAI_CHAT_DEPLOYMENT'
+                value: azureOpenAiChatDeployment
+              }
+              {
+                name: 'AZURE_OPENAI_API_VERSION'
+                value: azureOpenAiApiVersion
               }
             ] : [],
             // CM-59: enable the CM-55 web-chat channel in prod. The flag module
