@@ -6,8 +6,11 @@ import datetime as dt
 
 import pytest
 from agents.channels.schema import Channel, NormalizedMessage
+from agents.webchat import service
 from agents.webchat.service import (
     UnknownTenantError,
+    _render_reply,
+    _run_pipeline,
     build_raw,
     handle_message,
     normalize_message,
@@ -83,3 +86,77 @@ async def test_handle_message_masks_pii_in_pipeline() -> None:
 async def test_handle_message_unknown_number_raises() -> None:
     with pytest.raises(UnknownTenantError):
         await handle_message("+10000000000", "hello")
+
+
+# --- CM-95: Coordinator reply rendering ------------------------------------
+
+
+def test_render_reply_renders_coordinator_reply() -> None:
+    """The Coordinator's combined answer lives under output['reply'] — render it."""
+    final = {
+        "intent": "maintenance",
+        "output": {
+            "status": "coordinated",
+            "reply": "We've logged ticket TKT-ABC123. Policy: owners only.",
+        },
+    }
+    text, stub = _render_reply(final)
+    assert stub is False
+    assert "TKT-ABC123" in text
+
+
+def test_render_reply_prefers_specialist_keys_over_reply() -> None:
+    """A single-specialist confirmation/answer still wins when present."""
+    text, stub = _render_reply(
+        {"output": {"confirmation": "logged TKT-2", "reply": "should-not-win"}}
+    )
+    assert stub is False
+    assert text == "logged TKT-2"
+
+
+def test_render_reply_stub_when_no_renderable_text() -> None:
+    text, stub = _render_reply(
+        {"intent": "maintenance", "urgency": "high", "output": {"status": "coordinated"}}
+    )
+    assert stub is True
+    assert "stub acknowledgement" in text
+
+
+async def test_handle_message_multi_intent_returns_coordinator_reply() -> None:
+    """End-to-end: a compound message routes to the Coordinator and returns its
+    combined reply (not a stub) — the CM-95 regression repro, offline."""
+    out = await handle_message(
+        "+919876543210",
+        "the sink is leaking and can a tenant book the banquet hall?",
+    )
+    assert out["stub"] is False
+    assert out["intent"] == "maintenance"
+    # The synthesized reply carries the maintenance ticket confirmation.
+    assert "TKT-" in out["reply"]
+
+
+def test_run_pipeline_logs_when_graph_invoke_fails(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A graph-invoke failure is logged (with traceback), not silently swallowed,
+    and degrades to the triage-only fallback."""
+    import logging
+
+    from agents.channels.schema import Channel
+    from agents.orchestrator.state import AgentState
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise RuntimeError("graph boom")
+
+    monkeypatch.setattr(service, "build_graph", _boom)
+    state = AgentState(
+        tenant_id="condo-tower-a",
+        request_id="r1",
+        channel=Channel.WEB,
+        raw_message="the heater is broken",
+    )
+    with caplog.at_level(logging.ERROR, logger="agents.webchat.service"):
+        result = _run_pipeline(state, "r1")
+    assert "graph invoke failed" in caplog.text
+    # Fell back to triage-only: a classification is still present.
+    assert result.get("intent") is not None
