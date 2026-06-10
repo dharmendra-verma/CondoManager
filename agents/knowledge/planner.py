@@ -37,6 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from agents.knowledge.ai_search_store import get_search_store
 from agents.knowledge.cosmos_store import get_vector_store
 from agents.knowledge.embeddings import Embedder, default_embedder
 from agents.knowledge.llm import (
@@ -181,7 +182,10 @@ class _LoopPlanner:
         # (node path). No store / embedder (offline / dev / CI) -> cannot
         # retrieve, so refuse WITHOUT any model or network call (CM-28).
         if store is None:
-            store = get_vector_store()
+            # CM-100: prefer Azure AI Search (hybrid: BM25 + vector) when
+            # configured; fall back to the Cosmos vector store otherwise so
+            # CI / offline / un-migrated installs are unchanged.
+            store = get_search_store() or get_vector_store()
         if embedder is None:
             embedder = default_embedder()
         if store is None or embedder is None:

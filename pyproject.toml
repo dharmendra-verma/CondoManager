@@ -82,6 +82,9 @@ dependencies = [
   # DefaultAzureCredential routes through the CM-18 User-Assigned MI in
   # prod; local dev uses az login.
   "azure-cosmos>=4.7,<5",
+  # CM-100: Azure AI Search client for the policy RAG store (hybrid BM25 +
+  # vector). DefaultAzureCredential/admin-key routes via config/KV.
+  "azure-search-documents>=11.5,<12",
   # CM-34: LangChain's text splitter for the Drive→Cosmos chunking pipeline
   # (agents/knowledge/chunking.py, reused by CM-33). Already pulled in
   # transitively by `langchain`; declared explicitly so the import is stable.

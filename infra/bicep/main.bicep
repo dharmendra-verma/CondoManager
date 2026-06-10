@@ -83,6 +83,15 @@ param azureOpenAiEndpoint string = ''
 @description('Shared building-wide policy partition(s) for the Knowledge RAG (CM-97), forwarded to the container app as POLICY_TENANT_ID. The policy corpus is ingested under this tenantId; retrieval queries it in addition to the asking tenant so policy questions resolve regardless of who asks. Comma-separated for multiple partitions; empty to disable.')
 param policyTenantId string = 'TEN-6404bdef-77a6-43f1-b3b9-794e19e30c36'
 
+@description('Azure AI Search endpoint for the policy RAG store (CM-100), forwarded to the container app. Defaults to the shared comossearch service. Takes effect only when azureSearchKeyKvSecretUri is also set (the key must be seeded into KV first) — otherwise the agent stays on the Cosmos store.')
+param azureSearchEndpoint string = 'https://comossearch.search.windows.net'
+
+@description('Azure AI Search index for the policy corpus (CM-100), forwarded to the container app.')
+param azureSearchIndex string = 'condo-policies'
+
+@description('Key Vault secret URI for the Azure AI Search key (CM-100). EMPTY by default so AI Search stays OFF until an operator seeds `azure-search-key` into KV and sets this to its secret URI (e.g. https://<vault>/secrets/azure-search-key) — a safe, explicit cutover from Cosmos.')
+param azureSearchKeyKvSecretUri string = ''
+
 @description('Deploy the CM-34 Google Drive → Cosmos knowledge-sync Function App (gdrive-sync). Defaults to dev-only: prod skips it so a prod deploy is not blocked by the App Service Plan VM quota (see CM-58). Override to true for prod once the quota is granted. Disabling only skips the timer-driven sync job; the core message pipeline is unaffected.')
 param deployGdriveSync bool = env == 'dev'
 
@@ -324,6 +333,11 @@ module containerApp './modules/container-app.bicep' = {
     // CM-97: shared policy partition so the Knowledge RAG retrieves building-wide
     // policies (ingested under their own tenantId, not the asking tenant's).
     policyTenantId: hasAgentImage ? policyTenantId : ''
+    // CM-100: Azure AI Search policy store. Off until the key URI is supplied
+    // (the container module gates on it), so this is a safe no-op by default.
+    azureSearchEndpoint: hasAgentImage ? azureSearchEndpoint : ''
+    azureSearchIndex: azureSearchIndex
+    azureSearchKeyKvSecretUri: hasAgentImage ? azureSearchKeyKvSecretUri : ''
   }
   // The MI's AcrPull grant must exist before the revision pulls the private
   // image at start. dependsOn is unconditional (acrRbac always deploys); it is

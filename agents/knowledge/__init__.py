@@ -33,6 +33,7 @@ CM-83 (Track A) wraps the RAG flow in a bounded reasoning loop:
 
 from __future__ import annotations
 
+from agents.knowledge.ai_search_store import AISearchStore, get_search_store
 from agents.knowledge.chunking import chunk_text
 from agents.knowledge.cosmos_store import CosmosVectorStore, get_vector_store
 from agents.knowledge.embeddings import (
@@ -80,6 +81,7 @@ __all__ = [
     "AzureOpenAIEmbedder",
     "ChatModel",
     "Citation",
+    "AISearchStore",
     "CosmosVectorStore",
     "DocState",
     "DocSyncResult",
@@ -103,6 +105,7 @@ __all__ = [
     "default_source",
     "get_chat_model",
     "get_knowledge_planner",
+    "get_search_store",
     "get_vector_store",
     "ingest_folder",
     "retrieve",

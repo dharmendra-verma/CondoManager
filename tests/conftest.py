@@ -22,6 +22,11 @@ _LLM_ENV_VARS = (
     "AZURE_OPENAI_API_KEY",
     "AZURE_OPENAI_CHAT_DEPLOYMENT",
     "AZURE_OPENAI_API_VERSION",
+    # CM-100: Azure AI Search store selection — clear so the knowledge planner
+    # stays on the offline/Cosmos path unless a test opts in.
+    "AZURE_SEARCH_ENDPOINT",
+    "AZURE_SEARCH_KEY",
+    "AZURE_SEARCH_INDEX",
 )
 
 
