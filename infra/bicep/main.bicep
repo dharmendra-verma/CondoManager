@@ -80,6 +80,9 @@ param gdriveTenantId string = 'default'
 @description('Azure OpenAI endpoint for CM-34 embeddings. Empty until an Azure OpenAI resource is provisioned in a later story; the sync function skips cleanly when unset.')
 param azureOpenAiEndpoint string = ''
 
+@description('Shared building-wide policy partition(s) for the Knowledge RAG (CM-97), forwarded to the container app as POLICY_TENANT_ID. The policy corpus is ingested under this tenantId; retrieval queries it in addition to the asking tenant so policy questions resolve regardless of who asks. Comma-separated for multiple partitions; empty to disable.')
+param policyTenantId string = 'TEN-6404bdef-77a6-43f1-b3b9-794e19e30c36'
+
 @description('Deploy the CM-34 Google Drive → Cosmos knowledge-sync Function App (gdrive-sync). Defaults to dev-only: prod skips it so a prod deploy is not blocked by the App Service Plan VM quota (see CM-58). Override to true for prod once the quota is granted. Disabling only skips the timer-driven sync job; the core message pipeline is unaffected.')
 param deployGdriveSync bool = env == 'dev'
 
@@ -318,6 +321,9 @@ module containerApp './modules/container-app.bicep' = {
     // agent image runs the channel.
     azureOpenAiEndpoint: hasAgentImage ? azureOpenAiEndpoint : ''
     azureOpenAiKeyKvSecretUri: hasAgentImage ? azureOpenAiKeyKvSecretUri : ''
+    // CM-97: shared policy partition so the Knowledge RAG retrieves building-wide
+    // policies (ingested under their own tenantId, not the asking tenant's).
+    policyTenantId: hasAgentImage ? policyTenantId : ''
   }
   // The MI's AcrPull grant must exist before the revision pulls the private
   // image at start. dependsOn is unconditional (acrRbac always deploys); it is

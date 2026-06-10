@@ -36,6 +36,25 @@ from agents.knowledge.models import (
 _log = logging.getLogger(__name__)
 
 
+def _policy_partitions_from_env() -> list[str]:
+    """Shared policy partition(s) from ``POLICY_TENANT_ID`` (CM-97).
+
+    The policy corpus is building-/community-wide but lives under one (or a few)
+    ``tenantId`` partition(s), distinct from the asking tenant. ``POLICY_TENANT_ID``
+    names those partition(s) (comma-separated) so retrieval can include them
+    alongside the caller's own partition. Empty / ``REPLACE-ME`` → no shared
+    partitions, i.e. today's caller-only behaviour (CM-18 placeholder convention).
+    """
+    raw = os.environ.get("POLICY_TENANT_ID", "").strip()
+    if not raw or raw == SECRET_PLACEHOLDER:
+        return []
+    return [
+        part
+        for part in (segment.strip() for segment in raw.split(","))
+        if part and part != SECRET_PLACEHOLDER
+    ]
+
+
 class CosmosVectorStore:
     """Reads/writes ``policies-vector`` chunks and ``knowledge_sync`` state."""
 
@@ -46,6 +65,7 @@ class CosmosVectorStore:
         database_name: str = DATABASE_NAME,
         vector_container: str = VECTOR_CONTAINER,
         state_container: str = STATE_CONTAINER,
+        policy_tenant_ids: list[str] | None = None,
     ) -> None:
         # Lazy-import azure.cosmos so callers that only need the env selector
         # (and get None) don't pay the import cost.
@@ -57,6 +77,27 @@ class CosmosVectorStore:
         database = client.get_database_client(database_name)
         self._vector = database.get_container_client(vector_container)
         self._state = database.get_container_client(state_container)
+        # CM-97: shared building-wide policy partitions to fold into every read,
+        # in addition to the caller's own tenant partition.
+        self._policy_partitions = (
+            policy_tenant_ids if policy_tenant_ids is not None
+            else _policy_partitions_from_env()
+        )
+
+    def _read_partitions(self, tenant_id: str) -> list[str]:
+        """Caller's partition + the shared policy partitions, de-duplicated.
+
+        Order-preserving with the caller first, so a single-partition install
+        (no ``POLICY_TENANT_ID``) issues exactly one query — identical to the
+        pre-CM-97 behaviour.
+        """
+        seen: set[str] = set()
+        out: list[str] = []
+        for candidate in (tenant_id, *self._policy_partitions):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                out.append(candidate)
+        return out
 
     # ---- sync state ------------------------------------------------------
 
@@ -103,13 +144,31 @@ class CosmosVectorStore:
         """Vector-similarity search via the DiskANN ``VectorDistance()`` index.
 
         Returns up to ``top_k`` ``(chunk, score)`` pairs ordered most-similar
-        first, scoped to the tenant partition. ``score`` is the cosine
-        ``VectorDistance`` value, which is a *similarity* (``1.0`` = identical),
-        not a distance (CM-42); a bare ``ORDER BY VectorDistance(...)`` already
-        ranks by descending similarity, so do NOT add ``DESC``. ``top_k`` is
-        interpolated as an int (Cosmos ``TOP`` does not accept a bound
+        first. CM-97: the search spans the caller's tenant partition **and** any
+        shared policy partitions (``POLICY_TENANT_ID``), so building-wide policies
+        are retrievable regardless of the asking tenant; per-partition ``top_k``
+        hits are merged, de-duplicated by chunk id (keeping the best score), and
+        truncated to ``top_k``. ``score`` is the cosine ``VectorDistance`` value,
+        a *similarity* (``1.0`` = identical), not a distance (CM-42).
+        """
+        merged: dict[str, tuple[VectorChunk, float]] = {}
+        for partition in self._read_partitions(tenant_id):
+            for chunk, score in self._search_partition(partition, embedding, top_k):
+                prev = merged.get(chunk.id)
+                if prev is None or score > prev[1]:
+                    merged[chunk.id] = (chunk, score)
+        ranked = sorted(merged.values(), key=lambda pair: pair[1], reverse=True)
+        return ranked[:top_k]
+
+    def _search_partition(
+        self, tenant_id: str, embedding: list[float], top_k: int
+    ) -> list[tuple[VectorChunk, float]]:
+        """One partition-scoped vector query (the pre-CM-97 single-partition path).
+
+        ``top_k`` is interpolated as an int (Cosmos ``TOP`` does not accept a bound
         parameter) — it is code-supplied, never user input, so this is not an
-        injection vector.
+        injection vector. A bare ``ORDER BY VectorDistance(...)`` already ranks by
+        descending similarity, so do NOT add ``DESC``.
         """
         query = (
             f"SELECT TOP {int(top_k)} c AS chunk, "
@@ -137,12 +196,23 @@ class CosmosVectorStore:
         """Case-insensitive keyword search over chunk text (``CONTAINS``).
 
         OR-matches any of ``terms`` against ``LOWER(c.text)``; empty ``terms``
-        returns nothing. Substring matching is coarse but cheap — it is the
-        lexical half of hybrid retrieval that RRF fuses with the vector hits,
-        not a standalone ranker.
+        returns nothing. CM-97: unions hits across the caller's tenant partition
+        and any shared policy partitions (``POLICY_TENANT_ID``), de-duplicated by
+        chunk id and capped at ``top_k``. Substring matching is coarse but cheap —
+        the lexical half of hybrid retrieval that RRF fuses with the vector hits.
         """
         if not terms:
             return []
+        merged: dict[str, VectorChunk] = {}
+        for partition in self._read_partitions(tenant_id):
+            for chunk in self._keyword_partition(partition, terms, top_k):
+                merged.setdefault(chunk.id, chunk)
+        return list(merged.values())[:top_k]
+
+    def _keyword_partition(
+        self, tenant_id: str, terms: list[str], top_k: int
+    ) -> list[VectorChunk]:
+        """One partition-scoped keyword query (the pre-CM-97 single-partition path)."""
         params: list[dict[str, object]] = [{"name": "@t", "value": tenant_id}]
         clauses: list[str] = []
         for i, term in enumerate(terms):

@@ -107,6 +107,9 @@ param azureOpenAiChatDeployment string = 'gpt-4o-mini'
 @description('Azure OpenAI data-plane API version for chat (CM-79). Emitted as AZURE_OPENAI_API_VERSION (only when the Azure OpenAI env vars are set). A GA version that supports tool/function calling — required for the agent structured outputs.')
 param azureOpenAiApiVersion string = '2024-10-21'
 
+@description('Shared building-wide policy partition(s) for the Knowledge RAG (CM-97), emitted as POLICY_TENANT_ID (comma-separated). The policy corpus lives under its own tenantId, distinct from the asking tenant; retrieval queries the caller partition PLUS these, so policy questions resolve regardless of who asks. Empty (default) keeps caller-only scoping.')
+param policyTenantId string = ''
+
 @description('ACR login server (e.g. acrcondomanager<env>.azurecr.io) for a PRIVATE image pull (CM-59). Empty string (default) omits the registries block — back-compat for the public hello-world image, which needs no auth. When set, requires userAssignedIdentityId: the MI authenticates the pull and must hold AcrPull (see acr-rbac.bicep).')
 param registryServer string = ''
 
@@ -339,7 +342,17 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
                 name: 'COSMOS_ENDPOINT'
                 value: cosmosEndpoint
               }
-            ]) : []
+            ]) : [],
+            // CM-97: shared building-wide policy partition(s) for the Knowledge
+            // RAG. The policy corpus lives under its own tenantId (not the asking
+            // tenant's), so retrieval must also query this partition or every
+            // policy question refuses. Empty (default) keeps caller-only scoping.
+            empty(policyTenantId) ? [] : [
+              {
+                name: 'POLICY_TENANT_ID'
+                value: policyTenantId
+              }
+            ]
           )
         }
       ]
