@@ -22,6 +22,7 @@ Flow (``handle_message``):
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,8 @@ from agents.orchestrator.state import AgentState
 
 from .directory import lookup_tenant
 from .tenants import TestTenant
+
+_log = logging.getLogger(__name__)
 
 
 class UnknownTenantError(Exception):
@@ -116,7 +119,12 @@ def _render_reply(final: dict[str, Any]) -> tuple[str, bool]:
     """
     output = final.get("output") or {}
     if isinstance(output, dict):
-        for key in ("confirmation", "answer", "reason"):
+        # CM-95: include "reply" — the Coordinator (CM-89 synthesis) emits its
+        # combined multi-intent answer under output["reply"], not confirmation/
+        # answer/reason. Without it every coordinated (multi-intent) response fell
+        # through to the stub even though the graph ran fine. Checked last so a
+        # single-specialist confirmation/answer/reason still wins when present.
+        for key in ("confirmation", "answer", "reason", "reply"):
             text = output.get(key)
             if isinstance(text, str) and text.strip():
                 return text, False
@@ -137,12 +145,22 @@ def _run_pipeline(state: AgentState, request_id: str) -> dict[str, Any]:
         )
         return _as_dict(final)
     except Exception:
+        # CM-95: log (with traceback) instead of swallowing silently — a bare
+        # except here is what kept graph-invoke failures invisible in prod.
+        _log.exception(
+            "web-chat graph invoke failed; falling back to triage-only "
+            "(request_id=%s)", request_id
+        )
         try:
             from agents.orchestrator import nodes  # noqa: PLC0415 -- lazy seam
 
             update = nodes.triage(state)
             return {**state.model_dump(), **update}
         except Exception:
+            _log.exception(
+                "web-chat triage fallback also failed; returning bare state "
+                "(request_id=%s)", request_id
+            )
             return state.model_dump()
 
 

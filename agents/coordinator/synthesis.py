@@ -295,6 +295,11 @@ def _compose(segments: list[_Segment]) -> SynthesisResult:
         if seg.unresolved:
             unresolved.append(seg.unresolved)
 
+    # CM-95: collapse identical unresolved notes (the LLM coordinator may re-call
+    # a refusing tool several times, each yielding the same "no grounded answer"
+    # note) so the tenant sees each distinct item once, in first-seen order.
+    unresolved = list(dict.fromkeys(unresolved))
+
     if unresolved:
         body.append(
             "We're still working on the following and will update you shortly: "
