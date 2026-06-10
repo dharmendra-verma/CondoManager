@@ -89,9 +89,6 @@ param azureSearchEndpoint string = 'https://comossearch.search.windows.net'
 @description('Azure AI Search index for the policy corpus (CM-100), forwarded to the container app.')
 param azureSearchIndex string = 'condo-policies'
 
-@description('Key Vault secret URI for the Azure AI Search key (CM-100). EMPTY by default so AI Search stays OFF until an operator seeds `azure-search-key` into KV and sets this to its secret URI (e.g. https://<vault>/secrets/azure-search-key) — a safe, explicit cutover from Cosmos.')
-param azureSearchKeyKvSecretUri string = ''
-
 @description('Deploy the CM-34 Google Drive → Cosmos knowledge-sync Function App (gdrive-sync). Defaults to dev-only: prod skips it so a prod deploy is not blocked by the App Service Plan VM quota (see CM-58). Override to true for prod once the quota is granted. Disabling only skips the timer-driven sync job; the core message pipeline is unaffected.')
 param deployGdriveSync bool = env == 'dev'
 
@@ -265,6 +262,12 @@ var langfuseSecretKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/langfuse
 // CM-75: KV secret URI for the Azure OpenAI API key, mounted into the agent
 // runtime as AZURE_OPENAI_API_KEY (secretRef) so the Knowledge embedder can auth.
 var azureOpenAiKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/azure-openai-key'
+// CM-100: KV secret URI for the Azure AI Search key, mounted into the agent
+// runtime as AZURE_SEARCH_KEY (secretRef). Non-empty here flips the policy RAG
+// store to Azure AI Search (hybrid BM25+vector) — the cutover from Cosmos. The
+// `azure-search-key` secret must be seeded in KV (done) for the secretRef to
+// resolve at revision start.
+var azureSearchKeyKvSecretUri = '${keyvault.outputs.vaultUri}secrets/azure-search-key'
 
 // CM-23: project name routed via LANGCHAIN_PROJECT. One LangSmith project per
 // env so traces don't bleed between dev iteration and any prod opt-in.
