@@ -58,6 +58,33 @@ Environments), go to [`docs/INFRA.md`](docs/INFRA.md).
 | [`INFRA.md`](docs/INFRA.md) | Azure resources (Bicep), Cosmos, Key Vault, one-time setup. |
 | [`CICD.md`](docs/CICD.md) | GitHub Actions pipelines, OIDC, deploy flow. |
 
+### Local development setup
+
+The Python toolchain is pinned in [`requirements-lock.txt`](requirements-lock.txt).
+Create a project virtual environment and install the locked deps — this matches
+the versions CI runs (so tests behave identically locally):
+
+```bash
+# bash
+python -m venv .venv
+source .venv/Scripts/activate        # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-lock.txt
+pytest
+```
+
+```powershell
+# PowerShell (Windows)
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-lock.txt
+pytest
+```
+
+`.venv/` is git-ignored — never commit it. If `pytest` collection errors with a
+`TestClient.__init__() got an unexpected keyword argument 'app'`, your
+interpreter is using stale global packages (a `starlette`/`httpx` version
+mismatch); run inside the `.venv` above instead.
+
 ## For AI coding agents (Claude Code, Cursor, etc.)
 
 **Read these two files first** — they encode every decision already made so
