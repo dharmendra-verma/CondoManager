@@ -26,12 +26,14 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from agents.channels.base import NormalizationError
 from agents.observability import (
     configure_logging,
     configure_otel,
     instrument_fastapi_app,
+    with_request_id,
 )
 from agents.observability.langfuse_export import flush_langfuse, init_langfuse
 
@@ -80,6 +82,47 @@ app = FastAPI(
     title="condomanager-webchat-test", docs_url=None, redoc_url=None, lifespan=_lifespan
 )
 
+
+class _RequestIdScopeMiddleware:
+    """Scope every HTTP request in a ``request_id`` (CM-101).
+
+    The CM-21 contract requires every inbound boundary to wrap its work in
+    ``with_request_id()``; the webchat app never did, so every log line from
+    ``/web/*`` carried the ``"unknown"`` sentinel and the log↔trace pivot rail
+    was dead for the web channel.
+
+    Pure ASGI (not ``BaseHTTPMiddleware``) so the ContextVar set here is
+    visible in the same context that runs the route handler. Honours an
+    incoming ``X-Request-ID`` header (cross-service propagation) and echoes
+    the id back on the response so callers can pivot straight into traces.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        incoming = dict(scope.get("headers") or []).get(b"x-request-id")
+        with with_request_id(incoming.decode("latin-1") if incoming else None) as rid:
+
+            async def send_with_request_id(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    message.setdefault("headers", []).append(
+                        (b"x-request-id", rid.encode("latin-1"))
+                    )
+                await send(message)
+
+            await self.app(scope, receive, send_with_request_id)
+
+
+# CM-101: added BEFORE instrument_fastapi_app — Starlette layers later-added
+# middleware OUTSIDE earlier-added, so this runs INSIDE the OTel server span;
+# ``with_request_id`` then tags that span with ``request_id`` in addition to
+# setting the ContextVar (logs) and baggage (outbound propagation).
+app.add_middleware(_RequestIdScopeMiddleware)
+
 # CM-80: attach FastAPI server-request instrumentation HERE, at import time —
 # before uvicorn builds the middleware stack and starts serving. Doing it in
 # _lifespan (where configure_otel(app=app) runs) is too late: Starlette freezes
@@ -105,7 +148,10 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_DEV_ORIGINS + _EXTRA_ORIGINS,
     allow_methods=["POST"],
-    allow_headers=["content-type"],
+    allow_headers=["content-type", "x-request-id"],
+    # CM-101: let the cross-origin SPA *read* the correlation id off responses
+    # (browsers hide non-safelisted response headers without this).
+    expose_headers=["x-request-id"],
 )
 
 

@@ -68,3 +68,44 @@ def test_message_unknown_number_404(monkeypatch: pytest.MonkeyPatch) -> None:
     res = client.post("/web/message", json={"mobile": "+10000000000", "content": "hi"})
     assert res.status_code == 404
     assert res.json()["detail"] == "unknown_number"
+
+
+# CM-101 — request_id correlation middleware
+
+
+def test_response_carries_generated_request_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBCHAT_TEST_ENABLED", "1")
+    res = client.post("/web/login", json={"mobile": "+919876543210"})
+    assert res.headers["x-request-id"].startswith("req_")
+
+
+def test_incoming_request_id_is_honoured(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WEBCHAT_TEST_ENABLED", "1")
+    res = client.post(
+        "/web/login",
+        json={"mobile": "+919876543210"},
+        headers={"X-Request-ID": "req_upstream123"},
+    )
+    assert res.headers["x-request-id"] == "req_upstream123"
+
+
+def test_handler_runs_inside_request_id_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CM-21 ContextVar must be set while the route handler runs — this is
+    exactly what was broken: logs emitted during handling fell back to the
+    ``"unknown"`` sentinel."""
+    from agents.observability.correlation import UNKNOWN_REQUEST_ID, get_request_id
+    from agents.webchat import app as app_module
+
+    seen: list[str] = []
+    real_resolve = app_module.resolve_tenant
+
+    def spying_resolve(mobile: str):  # noqa: ANN202
+        seen.append(get_request_id())
+        return real_resolve(mobile)
+
+    monkeypatch.setenv("WEBCHAT_TEST_ENABLED", "1")
+    monkeypatch.setattr(app_module, "resolve_tenant", spying_resolve)
+    res = client.post("/web/login", json={"mobile": "+919876543210"})
+    assert res.status_code == 200
+    assert seen and seen[0] != UNKNOWN_REQUEST_ID
+    assert seen[0] == res.headers["x-request-id"]
