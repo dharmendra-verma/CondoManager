@@ -43,7 +43,6 @@ infra/
 │   ├── tags.bicep                            # Reusable tag schema (env: dev|prod|shared)
 │   ├── main.parameters.json                  # Single parameters file (env=dev today)
 │   └── modules/                              # Per-resource Bicep modules
-│       ├── vnet.bicep                        # VNet + /23 subnet delegated to Container Apps (CM-16)
 │       ├── log-analytics.bicep               # Log Analytics workspace for app logs (CM-16)
 │       ├── container-apps-env.bicep          # Container Apps Managed Environment (CM-16)
 │       ├── container-app.bicep               # Hello-world Container App + MI attachment (CM-16, CM-18)
@@ -264,15 +263,23 @@ az deployment group create \
 
 ## Container Apps environment (CM-16)
 
-```
-VNet  vnet-condomanager-dev      10.0.0.0/16
- └── snet-containerapps-dev      10.0.0.0/23   (delegated to Microsoft.App/environments)
+> **CM-102 — no VNet.** The environment uses **default networking**. The original
+> CM-16 design VNet-injected it into a delegated /23 subnet, but that forces Azure
+> to provision a Standard Load Balancer + Standard public IP in a managed resource
+> group, billing 24x7 at ~Rs. 2,025/month — 55% of the entire subscription bill —
+> for zero isolation benefit (no private endpoints existed, and Cosmos and Key Vault
+> both ran with `publicNetworkAccess: Enabled`). Re-adding `vnetConfiguration` is
+> only justified alongside real private endpoints for Cosmos/Key Vault with public
+> access disabled; `tests/infra/test_bicep_lint.sh` guards against it otherwise.
+> Networking is immutable on an existing environment, so changing this means
+> recreating the environment and its FQDN.
 
+```
 Log Analytics  law-condomanager-dev     PerGB2018, 30-day retention
 
 Container Apps env  cae-condomanager-dev
  ├── Workload profile: Consumption  (free tier: 180K vCPU-sec/mo)
- ├── VNet integration: snet-containerapps-dev
+ ├── Networking: default (no VNet — no load balancer, no public IP)
  └── App logs: → law-condomanager-dev
 
 Container App  ca-hello-condomanager-dev
@@ -625,13 +632,18 @@ revision without redeploying the image.
 > the moment real keys enable the path. The host is logged from the resolved
 > env value instead. Regression-covered in `tests/observability/test_langfuse_export.py`.
 >
-> **Delivery reliability (CM-71).** Langfuse ingestion is **async + batched** with
-> a server-side processing delay. The prod Container App therefore runs
-> **`minReplicas=1`** (`main.bicep`: `env == 'prod' ? 1 : 0`) — a scale-to-zero
-> teardown immediately after a reply could otherwise drop the buffered trace
-> before it's delivered (the CM-69 per-request `flush()` reduces but doesn't fully
-> close that cold→zero race). Keeping one warm replica also removes chat
-> cold-starts. Cost: one always-on 0.25 vCPU / 0.5 GiB replica.
+> **Delivery reliability (CM-71, REVERSED by CM-102).** Langfuse ingestion is
+> **async + batched** with a server-side processing delay. CM-71 therefore ran the
+> prod Container App at **`minReplicas=1`**, because a scale-to-zero teardown
+> immediately after a reply can drop the buffered trace before it's delivered (the
+> CM-69 per-request `flush()` reduces but doesn't fully close that cold→zero race).
+>
+> **CM-102 set `minReplicas: 0` in prod as a cost measure (~Rs. 380/month), so that
+> race is now live and accepted.** Expect occasional missing traces at low volume,
+> plus a 10-30s cold start on the first message after idle — which a channel with a
+> short webhook timeout (Twilio/Telegram) may retry or drop. If either becomes
+> painful, revert `main.bicep` to `minReplicas: env == 'prod' ? 1 : 0` and update
+> the matching guard in `tests/infra/test_bicep_lint.sh`; it is only ~Rs. 380/month.
 
 **Wiring (CM-65).** `main.bicep` sets `langfuseEnabled = env == 'prod'` — the mirror
 of `langsmithEnabled = env == 'dev'`; the two tracing backends are split by env so

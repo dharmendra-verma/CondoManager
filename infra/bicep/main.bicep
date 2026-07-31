@@ -115,15 +115,10 @@ module tagsModule './tags.bicep' = {
   }
 }
 
-// VNet + delegated /23 subnet for Container Apps. (CM-16)
-module vnet './modules/vnet.bicep' = {
-  name: 'vnet-${env}'
-  params: {
-    env: env
-    location: location
-    tags: tagsModule.outputs.tags
-  }
-}
+// CM-102: the VNet + delegated /23 subnet from CM-16 was removed. It existed
+// only to VNet-inject the Container Apps environment, which forced a Standard
+// Load Balancer + public IP costing ~Rs. 2,025/month for zero isolation benefit.
+// See modules/container-apps-env.bicep for the full rationale.
 
 // Log Analytics workspace — required by Container Apps appLogsConfiguration. (CM-16)
 module logAnalytics './modules/log-analytics.bicep' = {
@@ -213,7 +208,6 @@ module containerAppsEnv './modules/container-apps-env.bicep' = {
     env: env
     location: location
     tags: tagsModule.outputs.tags
-    infrastructureSubnetId: vnet.outputs.containerAppsSubnetId
     logAnalyticsCustomerId: logAnalytics.outputs.workspaceCustomerId
     logAnalyticsSharedKey: logAnalytics.outputs.workspaceSharedKey
   }
@@ -312,12 +306,20 @@ module containerApp './modules/container-app.bicep' = {
     targetPort: containerTargetPort
     registryServer: hasAgentImage ? acr.outputs.loginServer : ''
     webchatEnabled: hasAgentImage
-    // CM-71: keep prod warm (minReplicas=1) so Langfuse trace ingestion — which
-    // is async + batched with a server-side processing delay — reliably completes;
-    // a scale-to-zero teardown right after a reply can drop the buffered trace
-    // (the CM-69 per-request flush helps but the cold→zero race remains). Also
-    // removes chat cold-starts. Dev (if ever restored) stays scale-to-zero.
-    minReplicas: env == 'prod' ? 1 : 0
+    // CM-102: prod scaled to zero as a cost measure (~Rs. 380/month). This
+    // REVERSES the CM-71 decision to keep prod warm, so the trade-off it was
+    // guarding against is now live and accepted:
+    //   * Langfuse trace ingestion is async + batched with a server-side
+    //     processing delay. A scale-to-zero teardown right after a reply can
+    //     drop the buffered trace — the CM-69 per-request flush helps but the
+    //     cold->zero race remains. Expect occasional missing traces at low volume.
+    //   * The first message after an idle period pays a 10-30s cold start. A
+    //     channel with a short webhook timeout (Twilio/Telegram) may retry.
+    // Revert to `env == 'prod' ? 1 : 0` if either becomes painful — it is only
+    // ~Rs. 380/month. Applied live via `az containerapp update` on 2026-07-31;
+    // this line makes it durable, since a main.bicep deploy would otherwise
+    // reset prod to minReplicas=1.
+    minReplicas: 0
     // CM-60: allow the prod portal (Static Web App) origin to call /web/* from
     // the browser. Creates an implicit dependency on the staticWebApp module.
     webchatCorsOrigins: hasAgentImage ? 'https://${staticWebApp.outputs.defaultHostname}' : ''
@@ -475,7 +477,7 @@ output resourceGroupLocation string = resourceGroup().location
 output resourceGroupTags object = resourceGroup().tags
 
 // CM-16 outputs — used by the smoke test to curl the hello-world app.
-output vnetName string = vnet.outputs.vnetName
+// (CM-102 removed `vnetName`; the VNet no longer exists.)
 output logAnalyticsWorkspaceName string = logAnalytics.outputs.workspaceName
 output containerAppsEnvironmentName string = containerAppsEnv.outputs.environmentName
 output containerAppsEnvironmentDefaultDomain string = containerAppsEnv.outputs.defaultDomain

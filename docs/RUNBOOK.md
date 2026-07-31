@@ -17,8 +17,20 @@ and the CM-55 web-chat channel as the public inbound entry point.
 
 | Surface | URL |
 |---|---|
-| **Agent runtime / web chat** (Container App) | `https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io` |
+| **Agent runtime / web chat** (Container App) | resolve it — see below (the domain token is environment-generated and changed in CM-102) |
 | **Tenant portal** (Static Web App) | `https://wonderful-pebble-094fa600f.7.azurestaticapps.net` |
+
+> The Container App FQDN embeds the managed environment's generated
+> `defaultDomain`, which changes whenever the environment is recreated — as it was
+> in CM-102 when VNet injection was removed. Never hardcode it; resolve it:
+>
+> ```bash
+> az containerapp show -g rg-condomanager -n ca-hello-condomanager-prod \
+>   --query "properties.configuration.ingress.fqdn" -o tsv
+> ```
+>
+> `deploy.yml` does exactly this when building the portal, so the web chat's API
+> base always tracks the live environment.
 
 > ⚠️ The web chat is a **TEST** channel: hardcoded `mobile → tenant` map
 > (`agents/webchat/tenants.py`), no OTP/real auth (CM-55/CM-56 own that). It is
@@ -30,7 +42,8 @@ and the CM-55 web-chat channel as the public inbound entry point.
 prod sets):
 
 ```bash
-BASE="https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io"
+BASE="https://$(az containerapp show -g rg-condomanager -n ca-hello-condomanager-prod \
+  --query 'properties.configuration.ingress.fqdn' -o tsv)"
 
 curl -s "$BASE/healthz"                        # -> {"status":"ok","channel_enabled":true}
 

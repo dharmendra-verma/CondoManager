@@ -197,13 +197,33 @@ jobs:
           echo "::add-mask::$token"
           echo "token=$token" >> "$GITHUB_OUTPUT"
 
+      # CM-102: resolve the Container App FQDN at deploy time instead of hardcoding
+      # it. The FQDN embeds the managed environment's generated defaultDomain
+      # (e.g. `ambitiousbay-0a96856a`), which changes whenever the environment is
+      # recreated — as it was when VNet injection was removed. A stale hardcoded
+      # value breaks the prod chat page silently, because the build still succeeds
+      # and only the browser's API calls fail.
+      - name: Resolve Container App FQDN
+        id: cafqdn
+        run: |
+          fqdn=$(az containerapp show \
+            --resource-group rg-condomanager \
+            --name ca-hello-condomanager-prod \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          if [ -z "$fqdn" ]; then
+            echo "::error::could not resolve ca-hello-condomanager-prod FQDN — refusing to build the portal against an empty API base"
+            exit 1
+          fi
+          echo "Resolved API base: https://$fqdn"
+          echo "fqdn=$fqdn" >> "$GITHUB_OUTPUT"
+
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         env:
           # CM-60: baked into the vite build so the prod chat page calls the
           # Container App API cross-origin (CORS allows the SWA origin). Empty in
           # local dev keeps /web/* same-origin via the vite proxy.
-          VITE_WEBCHAT_API_BASE: https://ca-hello-condomanager-prod.ambitiousbay-0a96856a.eastus2.azurecontainerapps.io
+          VITE_WEBCHAT_API_BASE: https://${{ steps.cafqdn.outputs.fqdn }}
         with:
           azure_static_web_apps_api_token: ${{ steps.swatoken.outputs.token }}
           action: upload

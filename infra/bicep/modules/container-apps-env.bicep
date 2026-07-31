@@ -5,11 +5,20 @@
 // 180K vCPU-sec / 400K GiB-sec free grant. Workload-profile-based environments
 // (Dedicated D4, E4, etc.) bill from the first second and are NOT used here.
 //
-// VNet integration is enabled by passing an infrastructure subnet that has
-// been delegated to Microsoft.App/environments (see vnet.bicep). `internal:
-// false` keeps the ingress LB public so the hello-world app is reachable for
-// smoke testing. A later story will flip this to true once Front Door / API
-// gateway is in place.
+// CM-102: this environment deliberately uses DEFAULT networking — there is no
+// `vnetConfiguration` block. A VNet-injected environment provisions a Standard
+// Load Balancer + Standard public IP in a managed resource group, and both bill
+// 24x7 whether or not a single request is served (~Rs. 2,025/month, 55% of the
+// entire Azure bill). The original CM-16 injection bought nothing: no private
+// endpoints existed anywhere in the subscription, and both Cosmos DB and Key
+// Vault ran with `publicNetworkAccess: Enabled` and no network ACLs, so all
+// traffic already traversed public endpoints.
+//
+// Do NOT re-add `vnetConfiguration` for its own sake. It is only worth the cost
+// alongside real private endpoints for Cosmos/Key Vault and public network
+// access disabled on both — otherwise it is a premium networking bill for zero
+// isolation. Note that networking is immutable on an existing environment, so
+// re-adding it means recreating the environment and changing the app FQDN again.
 
 targetScope = 'resourceGroup'
 
@@ -23,18 +32,12 @@ param location string
 @description('Tag map produced by tags.bicep.')
 param tags object
 
-@description('Resource ID of the VNet subnet delegated to Microsoft.App/environments.')
-param infrastructureSubnetId string
-
 @description('Log Analytics workspace customerId for appLogsConfiguration.')
 param logAnalyticsCustomerId string
 
 @description('Log Analytics workspace primary shared key. Marked @secure so it never appears in deployment outputs.')
 @secure()
 param logAnalyticsSharedKey string
-
-@description('When true, the environment ingress is internal-only (private IP). When false, the ingress is publicly reachable.')
-param internal bool = false
 
 var environmentName = 'cae-condomanager-${env}'
 
@@ -49,10 +52,6 @@ resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
         customerId: logAnalyticsCustomerId
         sharedKey: logAnalyticsSharedKey
       }
-    }
-    vnetConfiguration: {
-      infrastructureSubnetId: infrastructureSubnetId
-      internal: internal
     }
     workloadProfiles: [
       {

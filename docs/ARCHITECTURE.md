@@ -76,7 +76,7 @@ suffix (`dev` or `prod`); per-env resources sit side-by-side in the one RG.
 |---|---|---|---|
 | Channel adapters (WhatsApp / Telegram / Email / Web ingest) | Azure Container Apps — inbound HTTP on the agent app | `ca-...-condomanager-<env>` | `container-app.bicep` |
 | LangGraph orchestrator + all agents | Azure Container Apps — same container app | `ca-...-condomanager-<env>` | `container-app.bicep` |
-| Orchestrator networking | VNet + delegated subnet, Container Apps environment | `vnet-condomanager-<env>`, `cae-condomanager-<env>` | `vnet.bicep`, `container-apps-env.bicep` |
+| Orchestrator networking | Container Apps environment, default networking (no VNet — CM-102) | `cae-condomanager-<env>` | `container-apps-env.bicep` |
 | Orchestrator container image | Azure Container Registry (Basic SKU) | `acrcondomanager<env>` | `acr.bicep` |
 | Background jobs (gdrive-sync, analytics-digest) | Azure Functions (Consumption / Y1) | `func-condomanager-<env>` | `functions.bicep` |
 | Tenant portal — status lookup + tenant admin (`/api/tenants`) + web-chat test page | Azure Static Web App (Free) + managed Functions API | `swa-condomanager-<env>` | `static-web-app.bicep` |
