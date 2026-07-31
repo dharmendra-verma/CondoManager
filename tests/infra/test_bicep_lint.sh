@@ -14,9 +14,10 @@
 #  10. (CM-16) all module files in infra/bicep/modules/ compile and are RG-scoped
 #  11. (CM-16) per-env modules restrict env to dev / prod
 #  12. (CM-16) Container Apps env uses the Consumption workload profile
-#  13. (CM-16) VNet subnet is delegated to Microsoft.App/environments
+#  13. (CM-102) Container Apps env has NO vnetConfiguration (LB/public-IP cost guard)
 #  14. (CM-16) Container App defaults to minReplicas: 0 (free-tier guard)
-#  15. (CM-16) compiled ARM contains the Container Apps + VNet resource types
+#  15. (CM-16) compiled ARM contains the Container Apps resource types, and
+#      (CM-102) contains NO Microsoft.Network/virtualNetworks
 #  16. (CM-17) cosmos.bicep enables EnableNoSQLVectorSearch + diskANN on
 #      policies-vector, declares the four required containers, defaults
 #      enableFreeTier to true, and is wired into main.bicep
@@ -108,7 +109,7 @@ bicep_build "$BICEP_DIR/tags.bicep" /tmp/tags.json
 echo "   ✓ tags.bicep compiles cleanly"
 
 echo "▶  Compiling per-resource modules in $MODULES_DIR"
-MODULES=("vnet" "log-analytics" "container-apps-env" "container-app" "cosmos" "cosmos-rbac" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics" "static-web-app")
+MODULES=("log-analytics" "container-apps-env" "container-app" "cosmos" "cosmos-rbac" "managed-identity" "keyvault" "acr" "app-insights" "workbook" "action-group" "budget" "alert-rules" "functions" "analytics" "static-web-app")
 for m in "${MODULES[@]}"; do
   if [ ! -f "$MODULES_DIR/$m.bicep" ]; then
     echo "   ✗ module $m.bicep MISSING"
@@ -131,7 +132,7 @@ for tag in "${REQUIRED_TAGS[@]}"; do
 done
 
 echo "▶  Verifying targetScope is resourceGroup in main.bicep and all modules"
-for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/vnet.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/cosmos-rbac.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep" "$MODULES_DIR/static-web-app.bicep"; do
+for f in "$BICEP_DIR/main.bicep" "$MODULES_DIR/log-analytics.bicep" "$MODULES_DIR/container-apps-env.bicep" "$MODULES_DIR/container-app.bicep" "$MODULES_DIR/cosmos.bicep" "$MODULES_DIR/cosmos-rbac.bicep" "$MODULES_DIR/managed-identity.bicep" "$MODULES_DIR/keyvault.bicep" "$MODULES_DIR/acr.bicep" "$MODULES_DIR/app-insights.bicep" "$MODULES_DIR/workbook.bicep" "$MODULES_DIR/action-group.bicep" "$MODULES_DIR/budget.bicep" "$MODULES_DIR/alert-rules.bicep" "$MODULES_DIR/functions.bicep" "$MODULES_DIR/analytics.bicep" "$MODULES_DIR/static-web-app.bicep"; do
   if grep -Fq "targetScope = 'resourceGroup'" "$f"; then
     echo "   ✓ $(basename "$f") is resource-group scoped"
   else
@@ -234,12 +235,19 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying VNet subnet is delegated to Microsoft.App/environments"
-if grep -Fq "serviceName: 'Microsoft.App/environments'" "$MODULES_DIR/vnet.bicep"; then
-  echo "   ✓ subnet delegation to Microsoft.App/environments present"
-else
-  echo "   ✗ VNet subnet is NOT delegated to Microsoft.App/environments — Container Apps will fail to deploy"
+# CM-102 (was CM-16's subnet-delegation check): the environment must stay on
+# DEFAULT networking. Re-adding vnetConfiguration silently provisions a Standard
+# Load Balancer + public IP billing ~Rs. 2,025/month for zero isolation benefit,
+# so guard against the regression rather than the old delegation requirement.
+echo "▶  Verifying Container Apps env has NO VNet injection (cost guard)"
+# Match a real Bicep property assignment (`vnetConfiguration:` at the start of a
+# line), NOT the word appearing in the explanatory comment block above it.
+if grep -Eq "^[[:space:]]*vnetConfiguration[[:space:]]*:" "$MODULES_DIR/container-apps-env.bicep"; then
+  echo "   ✗ vnetConfiguration present in container-apps-env.bicep — this re-creates the"
+  echo "     Standard Load Balancer + public IP (~Rs. 2,025/month). See CM-102."
   FAIL=1
+else
+  echo "   ✓ no vnetConfiguration — environment uses default networking (no LB, no public IP)"
 fi
 
 echo "▶  Verifying Container App defaults to minReplicas 0 (free-tier guard)"
@@ -250,8 +258,8 @@ else
   FAIL=1
 fi
 
-echo "▶  Verifying compiled main.json includes Container Apps, VNet, and Cosmos resource types"
-for type in "Microsoft.Network/virtualNetworks" "Microsoft.OperationalInsights/workspaces" "Microsoft.App/managedEnvironments" "Microsoft.App/containerApps" "Microsoft.DocumentDB/databaseAccounts"; do
+echo "▶  Verifying compiled main.json includes Container Apps and Cosmos resource types"
+for type in "Microsoft.OperationalInsights/workspaces" "Microsoft.App/managedEnvironments" "Microsoft.App/containerApps" "Microsoft.DocumentDB/databaseAccounts"; do
   if grep -Fq "$type" /tmp/main.json; then
     echo "   ✓ $type present in compiled ARM"
   else
@@ -259,6 +267,16 @@ for type in "Microsoft.Network/virtualNetworks" "Microsoft.OperationalInsights/w
     FAIL=1
   fi
 done
+
+# CM-102: catch a VNet reintroduced anywhere in the template, not just via
+# container-apps-env.bicep's vnetConfiguration block.
+echo "▶  Verifying compiled main.json declares NO virtual network (cost guard)"
+if grep -Fq "Microsoft.Network/virtualNetworks" /tmp/main.json; then
+  echo "   ✗ Microsoft.Network/virtualNetworks present in compiled ARM — see CM-102"
+  FAIL=1
+else
+  echo "   ✓ no virtual network in compiled ARM"
+fi
 
 echo "▶  Verifying main.parameters.json exists, is valid JSON, and declares env"
 pfile="$BICEP_DIR/main.parameters.json"
@@ -1692,14 +1710,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CM-71 — prod Container App kept warm (minReplicas=1) so async/batched Langfuse
-# trace ingestion completes before a scale-to-zero teardown can drop it.
+# CM-102 — supersedes CM-71. Prod now scales to zero as a cost measure
+# (~Rs. 380/month). CM-71 had pinned minReplicas=1 to keep the app warm so
+# async/batched Langfuse trace ingestion completed before a scale-to-zero
+# teardown could drop it; that trade-off is now accepted (occasional dropped
+# traces at low volume, plus a 10-30s cold start on the first message).
+# Reverting is a one-line change back to `env == 'prod' ? 1 : 0`.
 # ---------------------------------------------------------------------------
-echo "▶  Verifying main.bicep pins prod Container App to minReplicas=1 (CM-71)"
-if grep -Eq "minReplicas:[[:space:]]*env[[:space:]]*==[[:space:]]*'prod'[[:space:]]*\?[[:space:]]*1[[:space:]]*:[[:space:]]*0" "$BICEP_DIR/main.bicep"; then
-  echo "   ✓ minReplicas = (env == 'prod' ? 1 : 0) forwarded to container-app module"
+echo "▶  Verifying main.bicep scales prod Container App to zero (CM-102 cost guard)"
+if grep -Eq "^[[:space:]]*minReplicas:[[:space:]]*0[[:space:]]*$" "$BICEP_DIR/main.bicep"; then
+  echo "   ✓ minReplicas = 0 forwarded to container-app module (scale-to-zero when idle)"
 else
-  echo "   ✗ main.bicep does NOT pin prod minReplicas=1 (warm for reliable Langfuse delivery)"
+  echo "   ✗ main.bicep does NOT scale prod to zero — a deploy would re-pin minReplicas=1"
+  echo "     and silently restore ~Rs. 380/month. See CM-102."
   FAIL=1
 fi
 
