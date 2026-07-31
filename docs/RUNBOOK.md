@@ -886,3 +886,61 @@ az group delete --name rg-condomanager --yes --no-wait
 - [ ] Re-run the prior template (§12.2) or revert the infra commit and let CI deploy
 - [ ] Confirm all smoke tests pass (§5) on the recovered state
 - [ ] Post a brief incident note in the relevant Jira story
+
+---
+
+## 13. Change Container Apps environment networking (CM-102)
+
+Container Apps environment networking is **immutable**. Removing (or adding)
+`vnetConfiguration` requires deleting and recreating the environment — and the
+deploy pipeline will **not** tell you if you skip that step.
+
+> ⚠️ **A normal deploy silently no-ops on this.** ARM resource-group deployments
+> run in *incremental* mode, which does not remove a property merely because the
+> template omits it. Verified on the CM-102 PR: `az deployment group what-if`
+> against the live RG produced **zero** mentions of `vnetConfiguration` or
+> `infrastructureSubnetId`, and reported the environment as a benign `~ Modify`.
+> So a deploy of the VNet-free template against a VNet-injected environment
+> **succeeds, reports green, and leaves the load balancer billing.** There is no
+> error to alert you. Confirm the outcome explicitly (step 5 below) rather than
+> trusting a green pipeline.
+>
+> The same what-if marked `vnet-condomanager-prod` as `* Ignore` — the deploy will
+> not delete the VNet either. That is a manual step.
+>
+> This also qualifies §12.2: "re-running the prior template converges the RG back"
+> holds for property *values*, not for properties that were *removed* from a
+> template, nor for immutable ones.
+
+```bash
+# 1. Delete the environment. This ALSO deletes every container app in it,
+#    along with their revisions. Key Vault, Cosmos DB, ACR, the managed identity
+#    and the Static Web App are untouched.
+az containerapp env delete -g rg-condomanager -n cae-condomanager-prod --yes
+
+# 2. Deploy (workflow_dispatch, target_env=prod). Bicep recreates the environment
+#    on default networking, then the container app with its KV secret refs and
+#    ACR pull via managed identity. deploy-portal-prod waits for deploy-prod and
+#    resolves the new FQDN automatically (CM-102), so the web chat follows along.
+
+# 3. The FQDN has changed — always resolve it, never hardcode it.
+BASE="https://$(az containerapp show -g rg-condomanager -n ca-hello-condomanager-prod \
+  --query 'properties.configuration.ingress.fqdn' -o tsv)"
+echo "$BASE"
+
+# 4. Smoke-test before closing the maintenance window.
+curl -s "$BASE/healthz"
+curl -s -X POST "$BASE/web/login" -H 'content-type: application/json' \
+  -d '{"mobile":"+919876543210"}'
+
+# 5. Delete the orphaned VNet, then CONFIRM the managed RG is gone. That
+#    disappearance — not the green deploy — is what proves the ~Rs. 2,025/month
+#    load balancer and public IP have actually stopped billing.
+az network vnet delete -g rg-condomanager -n vnet-condomanager-prod
+az group list --query "[?starts_with(name,'ME_cae-condomanager')].name" -o tsv
+# Expected: empty output. Any result means the environment is still VNet-injected.
+```
+
+The load balancer (`capp-svc-lb`) and public IP (`capp-svc-lb-ip`) live in the
+Azure-managed RG `ME_cae-condomanager-prod_rg-condomanager_eastus2` and cannot be
+deleted directly — they exist only as long as the VNet-injected environment does.

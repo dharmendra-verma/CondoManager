@@ -19,6 +19,12 @@
 // access disabled on both — otherwise it is a premium networking bill for zero
 // isolation. Note that networking is immutable on an existing environment, so
 // re-adding it means recreating the environment and changing the app FQDN again.
+//
+// Changing this property is NOT a normal deploy: ARM incremental mode does not
+// remove an omitted property, so deploying this template over a VNet-injected
+// environment succeeds, reports green, and silently leaves the load balancer
+// billing. See RUNBOOK.md §13 for the delete-and-recreate procedure and the
+// explicit check that the cost actually stopped.
 
 targetScope = 'resourceGroup'
 
