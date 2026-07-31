@@ -169,6 +169,14 @@ jobs:
     # The SWA deployment token is fetched JUST-IN-TIME via OIDC az login
     # (`az staticwebapp secrets list`) — no long-lived token secret is stored
     # in the repo, keeping the CM-15 OIDC-only posture.
+    #
+    # CM-102: must run AFTER deploy-prod, not alongside it. This job now resolves
+    # the Container App FQDN from Azure at build time, so it has to observe the
+    # infrastructure deploy's result — otherwise it can bake in a stale FQDN, or
+    # fail outright, whenever the environment is recreated. The trigger conditions
+    # below are deploy-prod's plus the PORTAL_DEPLOY_ENABLED gate, so ordering the
+    # two never skips a portal deploy that would otherwise have run.
+    needs: deploy-prod
     if: >-
       vars.PORTAL_DEPLOY_ENABLED == 'true'
       && (
