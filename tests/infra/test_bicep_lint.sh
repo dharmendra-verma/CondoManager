@@ -250,6 +250,27 @@ else
   echo "   ✓ no vnetConfiguration — environment uses default networking (no LB, no public IP)"
 fi
 
+# CM-104: a Consumption budget's startDate is immutable. Deriving it from
+# utcNow() rolls the value every calendar month, and Azure 400s the update —
+# which fails the whole prod deploy, portal job included. Guard both halves:
+# the module must not compute the date, and main.bicep must pin one per env.
+echo "▶  Verifying budget startDate is pinned, not derived from utcNow (monthly-breakage guard)"
+# Strip `//` comments before matching: the module's header block *quotes*
+# utcNow('yyyy-MM-01') while explaining why it must not be used, and a naive
+# grep flags that prose as the very regression it documents.
+if sed 's://.*::' "$MODULES_DIR/budget.bicep" | grep -Eq "utcNow"; then
+  echo "   ✗ budget.bicep derives startDate from utcNow — Azure rejects a changed"
+  echo "     budget start date (400) and the whole deploy fails from the next"
+  echo "     calendar month onward. Pin a literal per env instead. See CM-104."
+  FAIL=1
+elif ! grep -Eq "^[[:space:]]*var[[:space:]]+budgetStartDates[[:space:]]*=" "$BICEP_DIR/main.bicep"; then
+  echo "   ✗ main.bicep has no budgetStartDates map — budget.bicep now requires an"
+  echo "     explicit startDate. See CM-104."
+  FAIL=1
+else
+  echo "   ✓ budget startDate pinned per env in main.bicep (idempotent across months)"
+fi
+
 echo "▶  Verifying Container App defaults to minReplicas 0 (free-tier guard)"
 if grep -Eq "param\\s+minReplicas\\s+int\\s*=\\s*0" "$MODULES_DIR/container-app.bicep"; then
   echo "   ✓ minReplicas defaults to 0 (scale-to-zero when idle)"
