@@ -177,12 +177,23 @@ module actionGroup './modules/action-group.bicep' = {
 // RG-scoped because no Microsoft.CognitiveServices/accounts (Azure
 // OpenAI) resource exists yet; when CM-OpenAI lands OpenAI dominates
 // RG spend and the operator can tighten the filter to that resource.
+// CM-104: a budget's startDate is immutable — Azure 400s on any change, and
+// that failure sinks the whole deployment (portal job included). So pin one
+// literal per env instead of computing it: each value is the month that env's
+// budget was created. Only edit an entry when you have deleted that budget and
+// are intentionally recreating it. See modules/budget.bicep for the full note.
+var budgetStartDates = {
+  dev: '2026-06-01'
+  prod: '2026-08-01'
+}
+
 module budget './modules/budget.bicep' = {
   name: 'budget-${env}'
   params: {
     env: env
     actionGroupId: actionGroup.outputs.actionGroupId
     monthlyAmountUsd: alertMonthlyBudgetUsd
+    startDate: budgetStartDates[env]
   }
 }
 

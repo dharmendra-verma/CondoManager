@@ -12,6 +12,25 @@
 // "OpenAI only". When CM-OpenAI lands the OpenAI resource will dominate
 // RG spend anyway — operator can tighten the filter to a ResourceType
 // filter then. Documented in docs/OBSERVABILITY.md.
+//
+// ⚠️ startDate is IMMUTABLE once the budget exists (CM-104). Azure rejects any
+// change to it:
+//
+//     400 Start date of budgets cannot be updated.
+//         Please delete and create a new budget.
+//
+// and because this module is part of the main deployment, that 400 fails the
+// ENTIRE prod deploy — including `deploy-portal-prod`, which is gated on it.
+// This previously defaulted to `utcNow('yyyy-MM-01')` on the theory that a
+// cross-month redeploy would "roll the window". It does not roll; it 400s. The
+// effect was that every deploy from the second calendar month onward failed,
+// which is exactly how it broke on 2026-07-31 and again on 2026-08-01.
+//
+// So: callers pass a pinned per-env literal (`budgetStartDates` in main.bicep)
+// and never a computed date. Change one of those literals ONLY when you have
+// deleted that env's budget and are deliberately recreating it — Azure also
+// rejects a start date more than three months in the future, and a far-past one
+// on creation, so the pinned value should be the month of (re)creation.
 
 targetScope = 'resourceGroup'
 
@@ -26,8 +45,8 @@ param actionGroupId string
 @minValue(1)
 param monthlyAmountUsd int
 
-@description('First day of the budget window. Defaults to the first of the current UTC month — Bicep evaluates utcNow once per deployment, so redeploys within the same month are idempotent and cross-month redeploy intentionally rolls the window.')
-param startDate string = utcNow('yyyy-MM-01')
+@description('First day of the budget window, as YYYY-MM-01. MUST be a stable constant per env — see the warning below. Required (no default) so a caller cannot silently inherit a rolling date.')
+param startDate string
 
 var budgetName = 'budget-condomanager-${env}'
 

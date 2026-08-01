@@ -942,6 +942,24 @@ until [ -z "$(az containerapp env list -g rg-condomanager \
 #    on default networking, then the container app with its KV secret refs and
 #    ACR pull via managed identity. deploy-portal-prod waits for deploy-prod and
 #    resolves the new FQDN automatically (CM-102), so the web chat follows along.
+#
+#    ⚠️ ...but ONLY if deploy-prod goes green. deploy-portal-prod `needs:` it, so
+#    ANY failure in deploy-prod SKIPS the portal job — and a skipped job is not a
+#    red one, so the run just looks partly grey. The container app itself is
+#    created early in the ARM deployment, so prod comes back up and smoke-tests
+#    pass while the portal is still serving a bundle with the OLD FQDN baked in.
+#    The API is fine; the browser chat page calls a hostname that no longer
+#    exists. Confirm the portal job actually RAN, then verify the deployed bundle
+#    references the new FQDN:
+#      gh run view <run-id> --json jobs -q '.jobs[] | "\(.name): \(.conclusion)"'
+#      ASSET=$(curl -s https://wonderful-pebble-094fa600f.7.azurestaticapps.net/test-chat.html \
+#        | grep -oE '/assets/[A-Za-z0-9._-]+\.js' | head -1)
+#      curl -s "https://wonderful-pebble-094fa600f.7.azurestaticapps.net$ASSET" \
+#        | grep -oE 'ca-hello-condomanager-prod\.[a-z0-9-]+\.eastus2\.azurecontainerapps\.io' | sort -u
+#
+#    This is not hypothetical: on 2026-08-01 the budget module 400'd (CM-104),
+#    failing deploy-prod, skipping the portal, and leaving exactly that split
+#    state. A second run after fixing the budget was needed to land the portal.
 
 # 3. The FQDN has changed — always resolve it, never hardcode it.
 BASE="https://$(az containerapp show -g rg-condomanager -n ca-hello-condomanager-prod \
