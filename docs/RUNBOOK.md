@@ -912,11 +912,31 @@ deploy pipeline will **not** tell you if you skip that step.
 > holds for property *values*, not for properties that were *removed* from a
 > template, nor for immutable ones.
 
+> **Exercised 2026-08-01.** Steps 1a/1c and 4b below were added after this runbook
+> was run for real: the original step 1 claimed `az containerapp env delete`
+> cascades to the container apps inside it. It does not — it fails closed, and the
+> cutover stalls there until the app is deleted explicitly. Nothing is destroyed by
+> that failure, so it is safe to hit, but do not schedule the maintenance window
+> around the one-command version.
+
 ```bash
-# 1. Delete the environment. This ALSO deletes every container app in it,
-#    along with their revisions. Key Vault, Cosmos DB, ACR, the managed identity
-#    and the Static Web App are untouched.
+# 1a. Delete every container app in the environment FIRST. The env delete does
+#     NOT cascade — it fails closed with:
+#       ERROR: (ManagedEnvironmentHasContainerApps) The specified environment
+#       cae-condomanager-prod cannot be deleted because it still contains 1
+#       ContainerApps
+#     This deletes the app and all its revisions. Key Vault, Cosmos DB, ACR, the
+#     managed identity and the Static Web App are untouched.
+az containerapp delete -g rg-condomanager -n ca-hello-condomanager-prod --yes
+
+# 1b. Now delete the environment. Returns while the env sits in
+#     `ScheduledForDelete` for several more minutes — see the wait below.
 az containerapp env delete -g rg-condomanager -n cae-condomanager-prod --yes
+
+# 1c. WAIT for the name to be released before deploying. Recreating the env
+#     while the old one is still ScheduledForDelete races the teardown.
+until [ -z "$(az containerapp env list -g rg-condomanager \
+  --query "[?name=='cae-condomanager-prod'].name" -o tsv)" ]; do sleep 30; done
 
 # 2. Deploy (workflow_dispatch, target_env=prod). Bicep recreates the environment
 #    on default networking, then the container app with its KV secret refs and
@@ -933,12 +953,24 @@ curl -s "$BASE/healthz"
 curl -s -X POST "$BASE/web/login" -H 'content-type: application/json' \
   -d '{"mobile":"+919876543210"}'
 
+# 4b. Confirm the agent did NOT come back as a stub. The Azure OpenAI and AI
+#     Search env-var blocks in container-app.bicep are fail-closed: an empty
+#     param omits the vars entirely and the agent silently falls back to
+#     StubChatModel. Nothing errors — you only notice via answer quality.
+az containerapp show -g rg-condomanager -n ca-hello-condomanager-prod \
+  --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_ENDPOINT'].value" -o tsv
+# Expected: https://condo-policy-search.openai.azure.com/  (empty = fail-closed tripped;
+# check the AZURE_OPENAI_ENDPOINT *repo variable* still exists — deploy.yml passes it through)
+
 # 5. Delete the orphaned VNet, then CONFIRM the managed RG is gone. That
-#    disappearance — not the green deploy — is what proves the ~Rs. 2,025/month
+#    disappearance — not the green deploy — is what proves the ~Rs. 2,041/month
 #    load balancer and public IP have actually stopped billing.
 az network vnet delete -g rg-condomanager -n vnet-condomanager-prod
 az group list --query "[?starts_with(name,'ME_cae-condomanager')].name" -o tsv
 # Expected: empty output. Any result means the environment is still VNet-injected.
+# NOTE: in practice the managed RG disappears during step 1b, well before the env
+# itself leaves ScheduledForDelete — so this check can go green early. It confirms
+# the LB is gone; it does NOT confirm the new env is up. Check both.
 ```
 
 The load balancer (`capp-svc-lb`) and public IP (`capp-svc-lb-ip`) live in the
