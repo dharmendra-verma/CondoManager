@@ -250,6 +250,25 @@ else
   echo "   ✓ no vnetConfiguration — environment uses default networking (no LB, no public IP)"
 fi
 
+# CM-105: the three scheduled-query rules are the entire Azure Monitor line
+# (~Rs. 328/month; LAW + App Insights are free-tier at Rs. 0). Azure bills log
+# alert rules per query execution, so a rule that hardcodes `enabled: true`
+# starts billing again the moment it is redeployed, silently undoing the saving.
+# Require every rule to honour the rulesEnabled param instead.
+echo "▶  Verifying alert rules honour the rulesEnabled param (cost guard)"
+if sed 's://.*::' "$MODULES_DIR/alert-rules.bicep" | grep -Eq "^[[:space:]]*enabled:[[:space:]]*true"; then
+  echo "   ✗ alert-rules.bicep hardcodes 'enabled: true' — Azure bills log alert rules"
+  echo "     per query execution, so this re-starts ~Rs. 328/month spend on redeploy."
+  echo "     Thread the rulesEnabled param through instead. See CM-105."
+  FAIL=1
+elif ! grep -Eq "^[[:space:]]*param[[:space:]]+rulesEnabled[[:space:]]+bool" "$MODULES_DIR/alert-rules.bicep"; then
+  echo "   ✗ alert-rules.bicep has no rulesEnabled param — the alert rules can no"
+  echo "     longer be switched off from main.bicep. See CM-105."
+  FAIL=1
+else
+  echo "   ✓ alert rules gated on rulesEnabled (switchable without editing KQL)"
+fi
+
 # CM-104: a Consumption budget's startDate is immutable. Deriving it from
 # utcNow() rolls the value every calendar month, and Azure 400s the update —
 # which fails the whole prod deploy, portal job included. Guard both halves:
