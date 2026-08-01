@@ -71,6 +71,9 @@ param alertEmail string = ''
 @minValue(1)
 param hallucinationSpikeMinCalls int = 10
 
+@description('Whether the CM-26 scheduled-query alert rules actively evaluate (CM-105). Defaults FALSE: the three rules were ~Rs. 328/month — the entire Azure Monitor line, since LAW and App Insights both sit on free tiers at Rs. 0 — and pre-CM-28 their queries return zero rows regardless, so the spend bought no coverage. This is a deliberate REDUCTION IN COVERAGE, not a free optimisation: while false there is no latency SLO alert, no guardrail page, and no hallucination-spike alert. Flip to true (and redeploy) when real traffic arrives or CM-28 lands and starts emitting guardrail.cost_cap / guardrail.loop_cap events.')
+param alertRulesEnabled bool = false
+
 @description('Google Drive folder id the CM-34 sync job watches. Empty by default; an operator supplies it post-deploy (the function skips cleanly until then). Not a secret — a folder id is not sensitive.')
 param gdriveFolderId string = ''
 
@@ -209,6 +212,7 @@ module alertRules './modules/alert-rules.bicep' = {
     appInsightsId: appInsights.outputs.appInsightsId
     actionGroupId: actionGroup.outputs.actionGroupId
     hallucinationSpikeMinCalls: hallucinationSpikeMinCalls
+    rulesEnabled: alertRulesEnabled
   }
 }
 

@@ -37,6 +37,9 @@ param actionGroupId string
 @minValue(1)
 param hallucinationSpikeMinCalls int = 10
 
+@description('Whether the three scheduled-query rules actively evaluate. Azure Monitor bills log alert rules per rule per month by evaluation frequency — these three were ~Rs. 328/month, the entire Azure Monitor line (LAW and App Insights are both on free tiers at Rs. 0). Set false to stop that spend while prod traffic is ~zero and the queries return no rows anyway. The rules stay declared here, so re-enabling is this one flag plus a deploy — no rewriting the KQL. Defaults true so the module is safe on its own; main.bicep is what turns it off.')
+param rulesEnabled bool = true
+
 // Shared action block — every rule fires the same Action Group.
 var commonActions = {
   actionGroups: [ actionGroupId ]
@@ -55,7 +58,7 @@ resource latencySlo 'Microsoft.Insights/scheduledQueryRules@2023-03-15-preview' 
     displayName: 'CondoManager — Latency SLO breach (p95 > 2s)'
     description: 'Fires when p95 request latency over the last 5m exceeds 2000ms. Single-window simplification of the full burn-rate SLO; multi-window upgrade documented in docs/OBSERVABILITY.md.'
     severity: 2
-    enabled: true
+    enabled: rulesEnabled
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     scopes: [ appInsightsId ]
@@ -95,7 +98,7 @@ resource guardrailTrip 'Microsoft.Insights/scheduledQueryRules@2023-03-15-previe
     displayName: 'CondoManager — Guardrail tripped (cost or loop cap)'
     description: 'Fires when any customEvent named guardrail.cost_cap or guardrail.loop_cap is emitted in the last 5m. CM-28 will emit these from the LangGraph stop-rules; until then this alert is staged infrastructure waiting for traffic.'
     severity: 1
-    enabled: true
+    enabled: rulesEnabled
     evaluationFrequency: 'PT5M'
     windowSize: 'PT5M'
     scopes: [ appInsightsId ]
@@ -141,7 +144,7 @@ resource hallucinationSpike 'Microsoft.Insights/scheduledQueryRules@2023-03-15-p
     displayName: 'CondoManager — Hallucination spike (refusal rate floor)'
     description: 'Fires when total LLM calls in the last 1h > ${hallucinationSpikeMinCalls} AND refusal rate < 1%. Refusals are tracked via the llm.refused customEvent (CM-30 Triage emits when the model declines). Traffic gate prevents the "zero traffic = zero refusal" false positive.'
     severity: 2
-    enabled: true
+    enabled: rulesEnabled
     evaluationFrequency: 'PT15M'
     windowSize: 'PT1H'
     scopes: [ appInsightsId ]
